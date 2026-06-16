@@ -9,6 +9,7 @@ from bot.bot import create_bot
 from config import settings
 from core.manager import ProxyManager
 from core.storage import Storage
+from watcher.file_watcher import FileWatcher
 
 logging.basicConfig(
     level=logging.INFO,
@@ -25,6 +26,10 @@ async def run() -> None:
 
     bot, dp = create_bot(manager)
     api_app = create_api(manager)
+
+    watcher = FileWatcher(manager)
+    await watcher.load_once()
+    asyncio.create_task(watcher.run_forever())
 
     uvicorn_config = uvicorn.Config(
         api_app,

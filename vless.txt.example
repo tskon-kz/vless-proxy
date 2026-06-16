@@ -1,0 +1,13 @@
+# VLESS Proxy Manager — links file
+# One link per line. Lines starting with # are comments and are ignored.
+# Empty lines are ignored.
+# Copy this file to vless.txt and fill in your real links.
+
+# Netherlands
+vless://9d507afd-7e90-4b7e-8bd8-6877f7a304ae@155.117.137.168:443?flow=xtls-rprx-vision&type=tcp&security=reality&pbk=CMkW1axrhEXsamplekey&sni=cdn3-87.yahoo.com&sid=7e77e7e2cf2b7a79#Amsterdam
+
+# Germany
+vless://a1b2c3d4-e5f6-7890-abcd-ef1234567890@192.0.2.1:443?flow=xtls-rprx-vision&type=tcp&security=reality&pbk=AnotherSampleKey&sni=www.amazon.com&sid=abcd1234#Frankfurt
+
+# Temporarily disabled — prefix with # to skip
+# vless://dead0000-0000-0000-0000-000000000000@dead.example.com:443?security=none#Dead Server
