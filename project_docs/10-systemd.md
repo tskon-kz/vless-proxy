@@ -1,179 +1,78 @@
-# Модуль 10: точка входа и systemd
+# Деплой на Ubuntu (systemd)
 
-## Задача
+## Требования
 
-Реализовать `main.py` — точку входа сервиса, и `vless-manager.service` — systemd unit для запуска на Ubuntu.
+- Ubuntu 22.04+
+- Python 3.11+
+- [uv](https://github.com/astral-sh/uv)
 
-## `main.py`
-
-Запускает все компоненты как asyncio задачи, обрабатывает сигналы.
-
-```python
-import asyncio
-import logging
-import signal
-from config import settings
-from core.storage import Storage
-from core.manager import ProxyManager
-from watcher.file_watcher import FileWatcher
-from bot.bot import create_bot
-from api.server import create_api_server
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S"
-)
-
-async def main():
-    # 1. Инициализация
-    storage = Storage(settings.DB_PATH)
-    manager = ProxyManager(storage)
-    await manager.startup()
-
-    # 2. File watcher — загрузить файл при старте
-    watcher = FileWatcher(manager)
-    await watcher.load_once()
-
-    # 3. Запустить все компоненты
-    tasks = []
-
-    # Health checker (внутри manager.startup уже запущен как task)
-
-    # File watcher loop
-    tasks.append(asyncio.create_task(watcher.run_forever(), name="file_watcher"))
-
-    # REST API
-    api_server = create_api_server(manager)
-    tasks.append(asyncio.create_task(api_server.serve(), name="api_server"))
-
-    # Telegram bot (только если токен задан)
-    if settings.TG_BOT_TOKEN:
-        bot, dp = create_bot(manager)
-        tasks.append(asyncio.create_task(dp.start_polling(bot), name="telegram_bot"))
-    else:
-        logging.warning("TG_BOT_TOKEN not set, Telegram bot disabled")
-
-    # 4. Обработка остановки
-    loop = asyncio.get_event_loop()
-    stop_event = asyncio.Event()
-
-    def handle_signal():
-        logging.info("Shutdown signal received")
-        stop_event.set()
-
-    for sig in (signal.SIGTERM, signal.SIGINT):
-        loop.add_signal_handler(sig, handle_signal)
-
-    logging.info("VLESS Proxy Manager started")
-    await stop_event.wait()
-
-    # 5. Graceful shutdown
-    logging.info("Shutting down...")
-    for task in tasks:
-        task.cancel()
-    await asyncio.gather(*tasks, return_exceptions=True)
-    await manager.shutdown()
-    logging.info("Shutdown complete")
-
-if __name__ == "__main__":
-    asyncio.run(main())
-```
-
-## `vless-manager.service`
-
-```ini
-[Unit]
-Description=VLESS Proxy Manager
-After=network.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=vless-manager
-WorkingDirectory=/opt/vless-manager
-EnvironmentFile=/opt/vless-manager/.env
-ExecStart=/opt/vless-manager/.venv/bin/python main.py
-Restart=on-failure
-RestartSec=5
-KillSignal=SIGTERM
-TimeoutStopSec=15
-
-# Логи через journald
-StandardOutput=journal
-StandardError=journal
-SyslogIdentifier=vless-manager
-
-[Install]
-WantedBy=multi-user.target
-```
-
-## Скрипт установки `install.sh`
-
-Создать `install.sh` который настраивает всё с нуля на чистой Ubuntu 22.04+:
+## Установка uv
 
 ```bash
-#!/bin/bash
-set -e
-
-INSTALL_DIR="/opt/vless-manager"
-SERVICE_USER="vless-manager"
-
-echo "=== Installing VLESS Proxy Manager ==="
-
-# 1. Создать пользователя
-if ! id "$SERVICE_USER" &>/dev/null; then
-    useradd --system --no-create-home --shell /bin/false "$SERVICE_USER"
-fi
-
-# 2. Создать директорию
-mkdir -p "$INSTALL_DIR"
-cp -r . "$INSTALL_DIR/"
-chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR"
-
-# 3. Python venv
-python3 -m venv "$INSTALL_DIR/.venv"
-"$INSTALL_DIR/.venv/bin/pip" install -r "$INSTALL_DIR/requirements.txt"
-
-# 4. xray-core
-bash "$INSTALL_DIR/install-xray.sh"
-
-# 5. .env
-if [ ! -f "$INSTALL_DIR/.env" ]; then
-    cp "$INSTALL_DIR/.env.example" "$INSTALL_DIR/.env"
-    echo ""
-    echo "⚠️  Настройте $INSTALL_DIR/.env перед запуском"
-    echo "   Обязательно: TG_BOT_TOKEN, TG_ALLOWED_USER_IDS"
-fi
-
-# 6. systemd
-cp "$INSTALL_DIR/vless-manager.service" /etc/systemd/system/
-systemctl daemon-reload
-systemctl enable vless-manager
-
-echo ""
-echo "✅ Установка завершена"
-echo ""
-echo "Следующие шаги:"
-echo "  1. nano $INSTALL_DIR/.env          # задать токен бота"
-echo "  2. systemctl start vless-manager   # запустить"
-echo "  3. journalctl -u vless-manager -f  # смотреть логи"
+curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-## Просмотр логов
+## Шаги
+
+### 1. Клонировать репозиторий
 
 ```bash
-# Все логи
-journalctl -u vless-manager -f
-
-# Только ошибки
-journalctl -u vless-manager -p err
-
-# За последний час
-journalctl -u vless-manager --since "1 hour ago"
+git clone <repo> /opt/vless-proxy
+cd /opt/vless-proxy
 ```
 
-## Команды управления
+### 2. Установить xray-core
+
+```bash
+bash scripts/install-xray.sh
+which xray   # должно вернуть /usr/local/bin/xray
+```
+
+### 3. Настроить окружение
+
+```bash
+cp .env.example .env
+nano .env
+```
+
+Обязательно заполнить:
+- `TG_BOT_TOKEN` — токен от @BotFather
+- `TG_ALLOWED_USER_IDS` — ваш Telegram ID
+
+Получить свой ID можно у бота @userinfobot.
+
+Сгенерировать `API_SECRET_KEY` если нужен API:
+```bash
+python3 -c "import secrets; print(secrets.token_hex(32))"
+```
+
+### 4. Установить зависимости
+
+```bash
+uv sync
+```
+
+### 5. Настроить systemd-службу
+
+Открыть `scripts/vless-manager.service` и заменить:
+- `/path/to/vless-proxy` → реальный путь (например `/opt/vless-proxy`)
+- `YOUR_USERNAME` → имя пользователя от которого запускать
+
+```bash
+nano scripts/vless-manager.service
+sudo cp scripts/vless-manager.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable vless-manager
+```
+
+### 6. Запустить
+
+```bash
+sudo systemctl start vless-manager
+sudo systemctl status vless-manager
+```
+
+## Управление службой
 
 ```bash
 # Статус
@@ -182,25 +81,51 @@ systemctl status vless-manager
 # Перезапуск (например после правки .env)
 systemctl restart vless-manager
 
-# Обновить ссылки через файл
-nano /opt/vless-manager/vless.txt
-# (watcher подхватит через 30 сек)
+# Остановка
+systemctl stop vless-manager
 
-# Принудительная проверка через API
-curl http://127.0.0.1:8888/status | python3 -m json.tool
+# Логи в реальном времени
+journalctl -u vless-manager -f
 
-# Получить прокси
-curl http://127.0.0.1:8888/proxy/random
+# Только ошибки
+journalctl -u vless-manager -p err
+
+# Логи за последний час
+journalctl -u vless-manager --since "1 hour ago"
 ```
 
-## README.md
+## Обновление кода
 
-Создать `README.md` с секциями:
+```bash
+cd /opt/vless-proxy
+git pull
+uv sync
+systemctl restart vless-manager
+```
 
-1. Что это и зачем
-2. Быстрый старт (3 команды)
-3. Конфигурация (таблица всех переменных)
-4. Как обновлять ссылки (бот / файл / API)
-5. Примеры использования в клиентах (axios, aiogram, curl)
-6. Структура проекта
-7. Troubleshooting (xray не найден, нет живых прокси, бот не отвечает)
+## Файл службы (`scripts/vless-manager.service`)
+
+```ini
+[Unit]
+Description=VLESS Proxy Manager
+After=network.target
+
+[Service]
+Type=simple
+User=YOUR_USERNAME
+WorkingDirectory=/path/to/vless-proxy
+EnvironmentFile=/path/to/vless-proxy/.env
+ExecStart=/path/to/vless-proxy/.venv/bin/python main.py
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=15
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=vless-manager
+
+[Install]
+WantedBy=multi-user.target
+```
+
+`ExecStart` использует Python из виртуального окружения `.venv`, созданного командой `uv sync`. Путь абсолютный — systemd не поддерживает относительные пути в `ExecStart`.

@@ -1,167 +1,79 @@
-# Модуль 6: оркестратор (Core Manager)
+# Оркестратор (`core/manager.py`)
 
-## Задача
+## Роль
 
-Реализовать `core/manager.py` — центральный компонент, который связывает все остальные модули. Принимает новые ссылки, запускает/останавливает xray процессы, реагирует на результаты health check.
+`ProxyManager` — центральный компонент который связывает Storage, XrayProcessPool и HealthChecker. Все входные каналы (бот, файл, API) работают только через него.
 
-## Что реализовать
-
-### Класс `ProxyManager`
-
-Синглтон. Все остальные компоненты (бот, file watcher, API) общаются с сервисом только через него.
+## Инициализация
 
 ```python
-class ProxyManager:
-    def __init__(self, storage: Storage):
-        self.storage = storage
-        self.process_pool = XrayProcessPool(storage)
-        self.health_checker = HealthChecker(storage)
-        self._lock = asyncio.Lock()   # для update_proxies
+storage = Storage(settings.DB_PATH)
+manager = ProxyManager(storage)
+await manager.startup()
 ```
 
-### Метод `startup() -> None`
+`startup()`:
+1. Инициализирует БД
+2. Восстанавливает xray-процессы для всех `active` прокси из БД
+3. Запускает проверку `pending` прокси в фоне
+4. Запускает бесконечный цикл health-check (`run_forever`)
 
-Вызывается при старте сервиса. Порядок:
-1. `storage.init()` — создать таблицы
-2. Восстановить состояние из БД: взять все `active` прокси, запустить для них xray процессы
-3. Запустить `health_checker.check_pending()` — проверить всё что было `pending` до перезапуска
-4. Запустить `health_checker.run_forever(on_status_change=self._on_health_change)` как asyncio Task
-5. Логировать сколько прокси восстановлено
+## Добавление прокси
 
-### Метод `shutdown() -> None`
+```python
+report = await manager.update_proxies(raw_links, source="telegram")
+```
 
-Вызывается при остановке сервиса (SIGTERM/SIGINT):
-1. Отменить task health checker
-2. `process_pool.stop_all()`
-3. `storage.close()`
+`update_proxies()` под `asyncio.Lock`:
+1. Парсит ссылки через `parse_vless_list`
+2. Вызывает `storage.replace_all` — сохраняет в БД, помечает исчезнувшие как `dead`
+3. Останавливает xray-процессы для удалённых прокси
+4. Запускает health-check для новых `pending` прокси в фоне
 
-### Метод `update_proxies(raw_links: list[str], source: str) -> UpdateReport`
-
-Основной метод обновления. Вызывается из бота и file watcher. Защищён `asyncio.Lock` — нельзя запускать параллельно.
+Возвращает `UpdateReport`:
 
 ```python
 @dataclass
 class UpdateReport:
-    total_received: int
-    valid: int
-    invalid: int
-    parse_errors: list[str]    # описания ошибок парсинга для отчёта
-    newly_added: int
-    already_known: int
-    removed: int               # сколько убрано из активных (были в старом списке, нет в новом)
-    source: str
+    total_received: int   # len(raw_links) — все входящие строки
+    valid: int            # успешно разобранные
+    invalid: int          # total_received - valid
+    parse_errors: list[str]
+    newly_added: int      # новые (не были в БД)
+    already_known: int    # обновлённые (уже были)
+    removed: int          # помечены dead
+    source: str           # "telegram" / "file" / "api"
 ```
 
-**Алгоритм:**
+## Реакция на смену статуса
+
+Когда health-check завершает проверку, он вызывает синхронный колбэк `_status_change_callback`, который создаёт задачу `_on_health_change`:
 
 ```
-1. parse_vless_list(raw_links) → valid_configs, all_results
-2. storage.replace_all(valid_configs, source) → UpdateStats
-3. Для каждого нового прокси (status=pending):
-   a. Запустить health check (не ждать — в фоне через asyncio.create_task)
-4. Для прокси которые убраны из списка (status сменился на dead):
-   a. process_pool.stop_proxy(proxy_id)
-5. Вернуть UpdateReport
+прокси жив  → process_pool.start_proxy()   (если ещё не запущен)
+прокси мёртв → process_pool.stop_proxy()  (если был запущен)
+              → notify_callback(proxy, result)  (если настроен)
 ```
 
-Важно: health check новых прокси запускается в фоне, `update_proxies` не блокируется на это.
-
-### Метод `_on_health_change(result: HealthResult) -> None`
-
-Callback который вызывает health checker при изменении статуса.
+## Уведомления в Telegram
 
 ```python
-async def _on_health_change(self, result: HealthResult) -> None:
-    proxy = await self.storage.get_proxy_by_id(result.proxy_id)
-
-    if result.success and proxy.status != "active":
-        # сервер ожил — запустить xray процесс
-        config = parse_vless(proxy.raw_uri).config
-        await self.process_pool.start_proxy(proxy, config)
-
-    elif not result.success and proxy.status == "active":
-        # сервер умер — остановить процесс
-        await self.process_pool.stop_proxy(result.proxy_id)
+manager.notify_callback: Callable[[ProxyRow, HealthResult], Awaitable[None]] | None
 ```
 
-### Метод `get_status() -> ManagerStatus`
+Устанавливается из `bot.py` если задан `TG_NOTIFY_CHAT_ID`. Принимает сырые данные — форматирование текста остаётся в `bot/strings.py`, менеджер не знает про Telegram.
 
-Агрегированный статус для API и бота.
+## Получение прокси для клиента
 
 ```python
-@dataclass
-class ManagerStatus:
-    pool_stats: PoolStats          # из storage.get_stats()
-    active_proxies: list[ProxyInfo]  # список живых с портами и latency
-    check_url: str                 # текущий CHECK_URL из конфига
-    uptime_seconds: float
-
-@dataclass
-class ProxyInfo:
-    proxy_id: int
-    name: str
-    host: str
-    port: int
-    local_port: int
-    latency_ms: int | None
-    last_check: float | None
+info = await manager.get_proxy_for_client()   # случайный активный
+status = await manager.get_status()            # полный статус пула
 ```
 
-### Метод `force_recheck() -> None`
+`get_proxy_for_client()` перемешивает список активных и возвращает первый у которого есть работающий процесс.
 
-Немедленно запустить проверку всех прокси (не ждать следующего интервала). Вызывается из бота по команде `/check`.
+## Фоновые задачи
 
-```python
-async def force_recheck(self) -> None:
-    asyncio.create_task(self._run_full_check())
+Чтобы фоновые задачи не были потеряны GC (asyncio не держит слабые ссылки), менеджер хранит их в `_background_tasks: set[asyncio.Task]` и удаляет по завершении через `done_callback`.
 
-async def _run_full_check(self) -> None:
-    await self.health_checker.check_all_active()
-    await self.health_checker.check_pending()
-```
-
-### Метод `get_proxy_for_client() -> ProxyInfo | None`
-
-Вернуть один случайный живой прокси. Используется в REST API для `/proxy/random`.
-
-```python
-async def get_proxy_for_client(self) -> ProxyInfo | None:
-    active = await self.storage.get_active_proxies()
-    if not active:
-        return None
-    proxy = random.choice(active)
-    process = await self.storage.get_process(proxy.id)
-    if not process or process.status != "running":
-        return None
-    return ProxyInfo(...)
-```
-
-## Инициализация и DI
-
-`ProxyManager` создаётся один раз в `main.py` и передаётся во все компоненты:
-
-```python
-# main.py
-storage = Storage(settings.DB_PATH)
-manager = ProxyManager(storage)
-
-# передать в бот
-bot_app = create_bot(manager)
-
-# передать в API
-api_app = create_api(manager)
-
-# передать в file watcher
-watcher = FileWatcher(manager)
-```
-
-## Обработка ошибок
-
-- Если xray бинарник не найден при старте — логировать critical, но не падать. Прокси будут в статусе `pending` пока xray не появится.
-- Если нет свободных портов — логировать warning, новые прокси не запускать
-- Если `update_proxies` вызвана пока предыдущая ещё выполняется — ждать на Lock, не отклонять
-
-## Что НЕ нужно
-
-- Retry логики здесь — это в health checker
-- Персистентность очереди задач — всё в памяти, при рестарте восстанавливаемся из БД
+При `shutdown()` все фоновые задачи отменяются, xray-процессы останавливаются, соединение с БД закрывается.

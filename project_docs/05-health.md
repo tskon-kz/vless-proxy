@@ -1,169 +1,69 @@
-# Модуль 5: проверка живости серверов (Health Checker)
+# Проверка живости (`core/health.py`)
 
-## Задача
+## Как работает проверка
 
-Реализовать `core/health.py` — проверка доступности VLESS серверов через попытку обращения к заблокированному в РФ ресурсу. Живой сервер = тот, через который `CHECK_URL` из конфига отвечает успешно.
+Каждый прокси проверяется в два этапа:
 
-## Логика проверки
+1. **TCP-пинг** — `check_proxy_tcp(host, port)` — просто пробует открыть соединение к серверу. Если нет даже TCP — сразу `dead`, xray не запускается.
 
-### Почему именно заблокированный ресурс
+2. **HTTP через xray** — `check_proxy(proxy_id, config)` — поднимает временный xray-процесс на порту `19900 + (proxy_id % 100)`, делает GET-запрос к `CHECK_URL` через этот SOCKS5-порт, смотрит на статус ответа.
 
-Обычный TCP ping или curl на `example.com` не показывает работоспособность прокси: сервер может быть доступен, но сам заблокирован провайдером или попал под санкции. Проверка через `linkedin.com` (или другой `CHECK_URL`) гарантирует: если ответ пришёл — прокси реально работает и обходит блокировки.
+После проверки временный xray-процесс останавливается и его конфиг-файл удаляется.
 
-### Алгоритм проверки одного сервера
+## Коды статусов — успех
 
-1. Запустить временный xray процесс на случайном свободном порту из диапазона (или фиксированный `CHECK_PORT = 19999`)
-2. Подождать `settings.CHECK_STARTUP_XRAY_WAIT` секунд — xray нужно время инициализироваться
-3. Сделать HTTP GET запрос через SOCKS5 прокси на `127.0.0.1:CHECK_PORT` к `settings.CHECK_URL`
-4. Проверить ответ
-5. Остановить и удалить временный xray процесс
-6. Вернуть результат
+```python
+_SUCCESS_STATUSES = {200, 301, 302, 303, 307, 308, 403, 404, 429, 999}
+```
 
-### Что считать успехом
+Логика: если сервер отвечает любым кодом из этого набора — значит трафик прошёл через прокси, прокси живой. 403/404 от LinkedIn означает что запрос дошёл, просто заблокирован по какой-то причине. Таймаут или ошибка соединения = мёртвый прокси.
 
-HTTP статус коды которые означают "сервер живой":
-- `200` — OK
-- `999` — LinkedIn возвращает 999 для bot-like запросов, но это значит ресурс доступен
-- `301`, `302`, `303`, `307`, `308` — редиректы, ресурс есть
-- `403`, `404`, `429` — тоже OK, главное что соединение установлено
-
-Провал:
-- `aiohttp.ClientError` любого рода (connection refused, timeout, proxy error)
-- Таймаут превысил `settings.CHECK_TIMEOUT`
-- xray процесс упал до завершения запроса
-
-## Что реализовать
-
-### Датакласс `HealthResult`
+## `HealthResult`
 
 ```python
 @dataclass
 class HealthResult:
     proxy_id: int
     success: bool
-    latency_ms: int | None    # время от начала запроса до первого байта ответа
-    status_code: int | None   # HTTP статус или None при ошибке
-    error: str                # описание ошибки или "" если успех
-    checked_at: float         # unix timestamp
-    check_url: str            # какой URL проверяли (из конфига на момент проверки)
+    latency_ms: int | None    # только при success=True
+    status_code: int | None
+    error: str                 # описание ошибки при success=False
+    checked_at: float          # unix timestamp
+    check_url: str
 ```
 
-### Функция `check_proxy(proxy_id: int, vless_config: VlessConfig) -> HealthResult`
+## `HealthChecker`
 
-Основная функция. Async.
-
-**Детали реализации:**
-
-Запуск временного xray:
-```python
-# Использовать фиксированный порт для проверки
-CHECK_PORT = 19999  # или брать из settings
-config_path = write_xray_config(vless_config, CHECK_PORT, settings.XRAY_CONFIG_DIR + "/health")
-proc = await asyncio.create_subprocess_exec(
-    settings.XRAY_BINARY, "run", "-config", config_path,
-    stdout=asyncio.subprocess.DEVNULL,
-    stderr=asyncio.subprocess.DEVNULL
-)
-await asyncio.sleep(settings.CHECK_STARTUP_XRAY_WAIT)
-```
-
-HTTP запрос через SOCKS5:
-```python
-connector = aiohttp.TCPConnector()
-async with aiohttp.ClientSession(connector=connector) as session:
-    async with session.get(
-        settings.CHECK_URL,
-        proxy=f"socks5://127.0.0.1:{CHECK_PORT}",
-        timeout=aiohttp.ClientTimeout(total=settings.CHECK_TIMEOUT),
-        allow_redirects=False,   # не следовать редиректам — они тоже успех
-        headers={"User-Agent": "Mozilla/5.0"}  # минимальный UA чтобы не блокировали сразу
-    ) as resp:
-        status = resp.status
-```
-
-Замер latency — через `time.monotonic()` вокруг блока запроса.
-
-Cleanup — всегда в `finally`: `proc.terminate()`, удалить config файл.
-
-Обработка параллельных проверок — `CHECK_PORT` должен быть уникальным если несколько проверок идут параллельно. Решение: использовать asyncio Lock или генерировать порт как `19900 + (proxy_id % 100)`.
-
-### Функция `check_proxy_tcp(host: str, port: int) -> bool`
-
-Быстрая предварительная проверка — просто TCP connect. Не запускает xray.
+Главный класс. Конкурентность ограничена семафором на 5 одновременных проверок.
 
 ```python
-async def check_proxy_tcp(host: str, port: int, timeout: float = 5.0) -> bool:
-    try:
-        reader, writer = await asyncio.wait_for(
-            asyncio.open_connection(host, port),
-            timeout=timeout
-        )
-        writer.close()
-        await writer.wait_closed()
-        return True
-    except Exception:
-        return False
+checker = HealthChecker(storage)
 ```
 
-Используется как первый фильтр: если TCP недоступен — не тратить время на полную проверку.
+### Методы
 
-### Класс `HealthChecker`
+**`check_one(proxy, config, on_status_change=None) → HealthResult`**
 
-```python
-class HealthChecker:
-    def __init__(self, storage: Storage):
-        self._storage = storage
-        self._semaphore = asyncio.Semaphore(5)  # максимум 5 параллельных проверок
+Проверяет один прокси, обновляет статус в БД, вызывает `on_status_change(result)` если передан.
 
-    async def check_one(self, proxy: ProxyRow, config: VlessConfig) -> HealthResult:
-        """Проверить один прокси, обновить статус в storage."""
+**`check_pending(on_status_change=None) → list[HealthResult]`**
 
-    async def check_all_active(self) -> list[HealthResult]:
-        """Проверить все active прокси параллельно (с семафором)."""
+Проверяет все прокси со статусом `pending`. Вызывается сразу после добавления новых ссылок.
 
-    async def check_pending(self) -> list[HealthResult]:
-        """Проверить все pending прокси — новые, ещё не проверенные."""
+**`check_all_active(on_status_change=None) → list[HealthResult]`**
 
-    async def run_forever(self, on_status_change: Callable | None = None) -> None:
-        """Бесконечный цикл проверок с интервалом settings.CHECK_INTERVAL."""
-```
+Проверяет все активные прокси. Плановая проверка — вдруг кто-то упал.
 
-**Логика `check_one`:**
-1. TCP check — если упал, сразу `storage.set_proxy_status(id, "dead")`
-2. Полная проверка через xray
-3. Если успех: `storage.set_proxy_status(id, "active", latency_ms)`
-4. Если провал: `storage.set_proxy_status(id, "dead")`
-5. Если `fail_count >= 3` и статус был `active` — логировать что сервер похоже умер окончательно
-6. Вызвать `on_status_change(result)` callback если задан
+**`run_forever(on_status_change=None)`**
 
-**Логика `run_forever`:**
-```python
-while True:
-    await self.check_all_active()
-    await self.check_pending()
-    await asyncio.sleep(settings.CHECK_INTERVAL)
-```
+Бесконечный цикл: сначала active, потом pending, потом `sleep(CHECK_INTERVAL)`.
 
-**Логика `check_all_active` (параллельно с семафором):**
-```python
-async def _check_with_semaphore(proxy, config):
-    async with self._semaphore:
-        return await self.check_one(proxy, config)
+## Колбэк `on_status_change`
 
-tasks = [_check_with_semaphore(p, c) for p, c in proxy_config_pairs]
-results = await asyncio.gather(*tasks, return_exceptions=True)
-```
+Синхронная функция `(HealthResult) → None`. Вызывается после каждой проверки. `HealthChecker` передаёт сюда результат; `ProxyManager` использует это чтобы запустить/остановить xray-процесс и отправить уведомление в Telegram.
 
-## Важные детали
+Колбэк синхронный намеренно — `HealthChecker` не должен зависеть от логики менеджера. Менеджер внутри колбэка сам создаёт asyncio-задачу.
 
-- Порты для health check не пересекаются с пулом прокси (`10800-10820`) — использовать диапазон `19900-19999`
-- Каждый check_one создаёт и удаляет свой temp xray процесс — не переиспользовать
-- `allow_redirects=False` важен — иначе aiohttp будет следовать редиректам и может зависнуть
-- Логировать каждую проверку: proxy_id, host, результат, latency — это основной отладочный инструмент
-- Если `settings.XRAY_BINARY` не существует — `check_one` сразу возвращает ошибку с понятным сообщением, не крашится
+## Изоляция портов
 
-## Что НЕ нужно
-
-- Кешировать результаты проверок
-- Retry логику внутри check_one — Manager решает когда перепроверять
-- WebRTC/STUN/DNS leak test — только HTTP через SOCKS5
+Health-check использует порты `19900–19999` (формула: `19900 + proxy_id % 100`). Эти порты никогда не пересекаются с рабочим пулом (`10800–10820`), поэтому проверки не мешают работающим прокси.

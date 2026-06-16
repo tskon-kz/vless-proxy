@@ -1,147 +1,88 @@
-# Модуль 2: парсер и валидатор VLESS URI
-
-## Задача
-
-Реализовать `core/parser.py` — парсинг VLESS URI в структурированный объект и валидацию с детальными ошибками.
+# Парсер VLESS-ссылок (`core/parser.py`)
 
 ## Формат VLESS URI
 
 ```
-vless://<uuid>@<host>:<port>?<query_params>#<name>
+vless://<uuid>@<host>:<port>?<params>#<name>
 ```
 
 Пример:
 ```
-vless://9d507afd-7e90-4b7e-8bd8-6877f7a304ae@155.117.137.168:443?flow=xtls-rprx-vision&type=tcp&headerType=none&security=reality&fp=firefox&sni=cdn3-87.yahoo.com&pbk=CMkW1axrhEX...&sid=7e77e7e2cf2b7a79#Amsterdam
+vless://9d507afd-7e90-4b7e-8bd8-6877f7a304ae@1.2.3.4:443?security=reality&sni=example.com&pbk=KEY&sid=AB12#Amsterdam
 ```
 
-## Что реализовать
+## Структуры данных
 
-### Датакласс `VlessConfig`
+### `VlessConfig`
 
-```python
-@dataclass
-class VlessConfig:
-    # Обязательные поля
-    uuid: str
-    host: str
-    port: int
-    raw_uri: str          # оригинальная строка как есть
-    name: str             # из fragment (#...), URL-decoded, дефолт: ""
+Датакласс, хранящий все поля разобранной ссылки:
 
-    # Параметры транспорта
-    type: str             # tcp | ws | grpc | http | kcp, дефолт: tcp
-    security: str         # none | tls | reality, дефолт: none
-    flow: str             # xtls-rprx-vision | "", дефолт: ""
-    header_type: str      # none | http, дефолт: none
+| Поле | Описание |
+|------|----------|
+| `uuid` | UUID пользователя |
+| `host` | Адрес сервера |
+| `port` | Порт сервера |
+| `raw_uri` | Исходная строка (используется как уникальный ключ в БД) |
+| `name` | Имя из фрагмента URI (`#Название`) |
+| `type` | Транспорт: `tcp`, `ws`, `grpc` и др. |
+| `security` | Безопасность: `none`, `tls`, `reality` |
+| `flow` | Поток XTLS: `xtls-rprx-vision` или пусто |
+| `sni` | Server Name Indication |
+| `fp` | Fingerprint браузера |
+| `alpn` | Через запятую: `h2,http/1.1` |
+| `pbk` | Публичный ключ Reality |
+| `sid` | Short ID для Reality |
+| `path` | Путь для WebSocket |
+| `host_header` | Host-заголовок для WebSocket |
+| `service_name` | Имя сервиса для gRPC |
 
-    # TLS параметры
-    sni: str              # дефолт: ""
-    fp: str               # fingerprint, дефолт: ""
-    alpn: str             # дефолт: ""
-
-    # Reality параметры
-    pbk: str              # public key, дефолт: ""
-    sid: str              # short id, дефолт: ""
-    spx: str              # spider x, дефолт: ""
-
-    # WebSocket параметры
-    path: str             # дефолт: "/"
-    host_header: str      # заголовок Host для WS, дефолт: ""
-
-    # gRPC параметры
-    service_name: str     # дефолт: ""
-```
-
-### Датакласс `ParseResult`
+### `ParseResult`
 
 ```python
 @dataclass
 class ParseResult:
     success: bool
-    config: VlessConfig | None    # None если success=False
-    error: str                    # описание ошибки если success=False, "" если OK
-    raw_uri: str                  # оригинальная строка
+    raw_uri: str
+    config: VlessConfig | None   # заполнен при success=True
+    error: str                   # заполнен при success=False
 ```
 
-### Функция `parse_vless(uri: str) -> ParseResult`
+## Публичные функции
 
-Основная функция парсинга. Алгоритм:
+### `parse_vless(uri) → ParseResult`
 
-1. Проверить что строка начинается с `vless://`
-2. Распарсить через `urllib.parse.urlparse`
-3. Извлечь UUID из `netloc` (часть до `@`)
-4. Извлечь host и port
-5. Распарсить query params через `urllib.parse.parse_qs`
-6. Заполнить `VlessConfig`
-7. Вызвать `validate_config(config)` — если есть ошибки, вернуть `ParseResult(success=False, error=...)`
-8. Вернуть `ParseResult(success=True, config=config)`
+Парсит одну ссылку. Возвращает `ParseResult` с `success=False` и описанием ошибки если ссылка невалидна.
 
-### Функция `validate_config(config: VlessConfig) -> list[str]`
-
-Возвращает список ошибок (пустой список = всё ок). Проверки:
-
-**UUID:**
-- Валидный UUID v4 формат через `uuid.UUID(config.uuid)`
-
-**Host:**
-- Не пустой
-- Если IP — валидный IPv4 или IPv6 через `ipaddress` модуль
-- Если hostname — содержит хотя бы одну точку или является `localhost`
-- Нет пробелов и спецсимволов
-
-**Port:**
-- Целое число от 1 до 65535
-
-**Security + параметры:**
-- Если `security == "reality"`: обязательны `pbk` и `sni`
-- Если `security == "tls"`: `sni` желателен (warning, не ошибка)
-- Если `flow == "xtls-rprx-vision"`: `security` должен быть `reality` или `tls`
-
-**Transport:**
-- `type` — одно из: `tcp`, `ws`, `grpc`, `http`, `kcp`, `quic`
-- Если `type == "ws"`: `path` должен начинаться с `/`
-
-### Функция `parse_vless_list(text: str) -> tuple[list[VlessConfig], list[ParseResult]]`
-
-Принимает многострочный текст (или текст с пробелами). Возвращает:
-- список успешно распарсенных конфигов
-- список всех ParseResult (включая ошибочные) для отчёта
-
-Логика разбивки входного текста:
-- split по `\n`
-- дополнительно split по пробелу (на случай если ссылки через пробел)
-- strip каждой строки
-- пропустить пустые строки и строки не начинающиеся с `vless://`
-- дедупликация по `(uuid, host, port)` — одинаковые серверы не добавлять дважды
-
-### Функция `generate_summary(results: list[ParseResult]) -> str`
-
-Генерирует читаемый текст-отчёт для отправки в Telegram:
-```
-Обработано ссылок: 10
-✅ Валидных: 8
-❌ Невалидных: 2
-
-Ошибки:
-• vless://bad-uuid@... — невалидный UUID
-• vless://...@host:99999 — порт вне диапазона
+```python
+result = parse_vless("vless://...")
+if result.success:
+    print(result.config.host)
 ```
 
-## Что НЕ нужно
+### `validate_config(config) → list[str]`
 
-- Не парсить `vmess://`, `trojan://` и другие протоколы — только `vless://`
-- Не делать сетевых запросов — только синтаксическая валидация
-- Не бросать исключений наружу — все ошибки в `ParseResult.error`
+Проверяет распарсенный конфиг на корректность. Возвращает список ошибок (пустой = всё хорошо):
 
-## Тесты
+- UUID должен быть валидным UUID4
+- Host не может быть пустым; hostname без точки (кроме `localhost`) отклоняется
+- Port в диапазоне 1–65535
+- Transport type должен быть из: `tcp`, `ws`, `grpc`, `http`, `kcp`, `quic`
+- WebSocket: `path` должен начинаться с `/`
+- Reality: обязательны `pbk` и `sni`
+- `flow=xtls-rprx-vision` требует `security=reality` или `security=tls`
 
-Создать `tests/test_parser.py` с pytest. Обязательные кейсы:
-- валидная ссылка с reality (из примера выше)
-- ссылка без `vless://` префикса
-- невалидный UUID
-- порт 0 и порт 99999
-- отсутствие `pbk` при `security=reality`
-- пустая строка
-- `parse_vless_list` с миксом валидных и невалидных
-- дедупликация одинаковых ссылок
+### `parse_vless_list(text) → (list[VlessConfig], list[ParseResult])`
+
+Парсит текст, содержащий несколько ссылок. Ссылки могут быть разделены пробелами, переносами строк, находиться в произвольном тексте — функция извлекает всё начинающееся с `vless://`.
+
+Дедупликация по ключу `(uuid, host, port)` — если одна ссылка повторяется с разными параметрами (например, разным `#name`), берётся первая.
+
+```python
+configs, results = parse_vless_list(text)
+# configs — только успешно разобранные, без дублей
+# results — все попытки, включая ошибки (для отчёта)
+```
+
+### `generate_summary(results) → str`
+
+Формирует читаемый текст-отчёт: сколько валидных, сколько с ошибками, и перечень ошибок.
