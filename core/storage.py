@@ -234,6 +234,13 @@ class Storage:
         async with self._conn.execute("SELECT * FROM proxies") as cursor:
             return [_row_to_proxy(r) async for r in cursor]
 
+    async def get_proxy_by_id(self, proxy_id: int) -> ProxyRow | None:
+        async with self._conn.execute(
+            "SELECT * FROM proxies WHERE id = ?", (proxy_id,)
+        ) as cursor:
+            row = await cursor.fetchone()
+        return _row_to_proxy(row) if row else None
+
     async def replace_all(
         self, configs: list[VlessConfig], source: str
     ) -> UpdateStats:
@@ -247,9 +254,6 @@ class Storage:
 
         added = 0
         removed = 0
-
-        async with self._conn.execute("BEGIN"):
-            pass
 
         try:
             for config in configs:
