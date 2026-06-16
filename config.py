@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     # REST API
     API_HOST: str = "127.0.0.1"
     API_PORT: int = 8888
+    API_SECRET_KEY: str = ""  # required for POST /update; endpoint disabled if empty
 
     # Storage
     DB_PATH: str = "./state.db"
