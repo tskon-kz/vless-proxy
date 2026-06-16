@@ -1,19 +1,17 @@
 [Unit]
 Description=VLESS Proxy Manager
 After=network.target
-Wants=network-online.target
 
 [Service]
 Type=simple
-User=vless-manager
-WorkingDirectory=/opt/vless-manager
-EnvironmentFile=/opt/vless-manager/.env
-ExecStart=/opt/vless-manager/.venv/bin/python main.py
+User=YOUR_USERNAME
+WorkingDirectory=/path/to/vless-proxy
+EnvironmentFile=/path/to/vless-proxy/.env
+ExecStart=/path/to/vless-proxy/.venv/bin/python main.py
 Restart=on-failure
 RestartSec=5
 KillSignal=SIGTERM
 TimeoutStopSec=15
-
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=vless-manager

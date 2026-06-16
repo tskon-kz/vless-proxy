@@ -16,12 +16,20 @@ nano .env   # set TG_BOT_TOKEN and TG_ALLOWED_USER_IDS
 uv run python main.py
 ```
 
-## Ubuntu server install
+## Ubuntu server (systemd)
 
 ```bash
-sudo bash scripts/install.sh
-nano /opt/vless-manager/.env   # set TG_BOT_TOKEN
-sudo systemctl start vless-manager
+# 1. Clone and set up
+git clone <repo> && cd vless-proxy
+bash scripts/install-xray.sh
+cp .env.example .env && nano .env
+uv sync
+
+# 2. Edit service file — replace /path/to/vless-proxy and YOUR_USERNAME
+nano scripts/vless-manager.service
+sudo cp scripts/vless-manager.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now vless-manager
 ```
 
 ## Configuration
@@ -139,9 +147,8 @@ journalctl -u vless-manager --since "1 hour ago"
 │   ├── bot.py             # Telegram bot (aiogram 3)
 │   └── strings.py         # All user-facing text
 └── scripts/
-    ├── install.sh             # Ubuntu server installer
     ├── install-xray.sh        # xray-core binary installer
-    ├── vless-manager.service  # systemd unit file
+    ├── vless-manager.service  # systemd unit template
     └── update-proxies.sh      # CLI helper for updating vless.txt
 ```
 
