@@ -9,7 +9,7 @@ from bot.bot import create_bot
 from config import settings
 from core.manager import ProxyManager
 from core.storage import Storage
-from watcher.file_watcher import FileWatcher
+from core.watcher import FileWatcher
 
 logging.basicConfig(
     level=logging.INFO,

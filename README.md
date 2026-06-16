@@ -6,7 +6,7 @@ Python service that accepts VLESS links, validates them, checks liveness through
 
 ```bash
 # 1. Install xray-core
-bash install-xray.sh
+bash scripts/install-xray.sh
 
 # 2. Configure
 cp .env.example .env
@@ -19,7 +19,7 @@ uv run python main.py
 ## Ubuntu server install
 
 ```bash
-sudo bash install.sh
+sudo bash scripts/install.sh
 nano /opt/vless-manager/.env   # set TG_BOT_TOKEN
 sudo systemctl start vless-manager
 ```
@@ -122,27 +122,27 @@ journalctl -u vless-manager --since "1 hour ago"
 ## Project structure
 
 ```
+├── main.py                # Entry point
 ├── config.py              # All settings (pydantic-settings)
-├── main.py                # Entry point — wires everything together
+├── .env.example           # Config reference
+├── vless.txt.example      # VLESS links file format reference
 ├── core/
 │   ├── parser.py          # VLESS URI parsing and validation
 │   ├── storage.py         # SQLite persistence (aiosqlite)
 │   ├── xray.py            # xray-core process management
 │   ├── health.py          # SOCKS5 health checking
-│   └── manager.py         # Central orchestrator
+│   ├── manager.py         # Central orchestrator
+│   └── watcher.py         # File-based proxy updates
 ├── api/
 │   └── server.py          # FastAPI REST server
 ├── bot/
 │   ├── bot.py             # Telegram bot (aiogram 3)
 │   └── strings.py         # All user-facing text
-├── watcher/
-│   └── file_watcher.py    # File-based proxy updates
-├── scripts/
-│   └── update-proxies.sh  # CLI helper for updating vless.txt
-├── install.sh             # Ubuntu server installer
-├── install-xray.sh        # xray-core binary installer
-├── vless-manager.service  # systemd unit file
-└── .env.example           # All config variables with comments
+└── scripts/
+    ├── install.sh             # Ubuntu server installer
+    ├── install-xray.sh        # xray-core binary installer
+    ├── vless-manager.service  # systemd unit file
+    └── update-proxies.sh      # CLI helper for updating vless.txt
 ```
 
 ## Troubleshooting
@@ -150,7 +150,7 @@ journalctl -u vless-manager --since "1 hour ago"
 **xray not found**
 
 ```bash
-bash install-xray.sh
+bash scripts/install-xray.sh
 which xray   # should print /usr/local/bin/xray
 ```
 

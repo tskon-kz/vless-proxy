@@ -12,7 +12,7 @@ if [[ "$(uname -s)" != "Linux" ]]; then
 fi
 
 if [[ $EUID -ne 0 ]]; then
-    echo "Run as root: sudo bash install.sh" >&2
+    echo "Run as root: sudo bash scripts/install.sh" >&2
     exit 1
 fi
 
@@ -41,7 +41,7 @@ cd "$INSTALL_DIR"
 uv sync --no-dev
 
 # 4. xray-core
-bash "$INSTALL_DIR/install-xray.sh"
+bash "$INSTALL_DIR/scripts/install-xray.sh"
 
 # 5. .env
 if [[ ! -f "$INSTALL_DIR/.env" ]]; then
@@ -58,7 +58,7 @@ chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR"
 chmod 640 "$INSTALL_DIR/.env"
 
 # 7. systemd
-cp "$INSTALL_DIR/$SERVICE_FILE" /etc/systemd/system/
+cp "$INSTALL_DIR/scripts/$SERVICE_FILE" /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable "$SERVICE_FILE"
 

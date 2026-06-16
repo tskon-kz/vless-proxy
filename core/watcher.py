@@ -32,11 +32,18 @@ class FileWatcher:
         if current_hash == self._last_hash:
             return
 
-        logger.info("file changed: %s", self._file_path)
-        self._last_hash = current_hash
-
         try:
             content = self._file_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return
+
+        if not content.strip():
+            return  # file is empty — wait for content to appear
+
+        self._last_hash = current_hash
+        logger.info("file changed: %s", self._file_path)
+
+        try:
             vless_links = [
                 line.strip()
                 for line in content.splitlines()
@@ -57,17 +64,21 @@ class FileWatcher:
                 report.newly_added,
                 report.removed,
             )
+            self._file_path.unlink()
+            self._last_hash = None
+            logger.info("deleted %s after import", self._file_path)
 
         except Exception as exc:
             logger.error("error processing file %s: %s", self._file_path, exc)
 
     async def load_once(self) -> bool:
         if not self._file_path.exists():
-            logger.info("no file found at %s, skipping initial load", self._file_path)
             return False
 
-        self._last_hash = self._hash_file(self._file_path)
         content = self._file_path.read_text(encoding="utf-8", errors="replace")
+        if not content.strip():
+            return False  # empty file — wait for content
+
         links = [
             line.strip()
             for line in content.splitlines()
@@ -78,6 +89,8 @@ class FileWatcher:
             return False
 
         await self._manager.update_proxies(links, source="file")
+        self._file_path.unlink()
+        logger.info("loaded and deleted %s", self._file_path)
         return True
 
     async def run_forever(self) -> None:

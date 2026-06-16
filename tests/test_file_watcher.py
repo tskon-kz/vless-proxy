@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from core.manager import UpdateReport
-from watcher.file_watcher import FileWatcher
+from core.watcher import FileWatcher
 
 VALID_URI = (
     "vless://9d507afd-7e90-4b7e-8bd8-6877f7a304ae@1.2.3.4:443"
@@ -19,7 +19,7 @@ def _make_watcher(tmp_path: Path, file_name: str = "vless.txt") -> tuple[FileWat
         parse_errors=[], newly_added=1, already_known=0,
         removed=0, source="file",
     ))
-    with patch("watcher.file_watcher.settings") as s:
+    with patch("core.watcher.settings") as s:
         s.VLESS_FILE = str(tmp_path / file_name)
         s.FILE_CHECK_INTERVAL = 30
         watcher = FileWatcher(manager)
@@ -99,6 +99,24 @@ class TestCheckFile:
 
         assert manager.update_proxies.call_count == 2
 
+    async def test_skips_empty_file_and_waits(self, tmp_path):
+        watcher, manager = _make_watcher(tmp_path)
+        f = tmp_path / "vless.txt"
+        f.write_text("")
+        await watcher._check_file()
+        manager.update_proxies.assert_not_called()
+        # _last_hash must NOT be updated so the next poll picks up added content
+        assert watcher._last_hash is None
+
+    async def test_picks_up_file_after_it_was_empty(self, tmp_path):
+        watcher, manager = _make_watcher(tmp_path)
+        f = tmp_path / "vless.txt"
+        f.write_text("")
+        await watcher._check_file()
+        f.write_text(VALID_URI)
+        await watcher._check_file()
+        manager.update_proxies.assert_called_once()
+
     async def test_skips_file_with_no_vless_links(self, tmp_path):
         watcher, manager = _make_watcher(tmp_path)
         (tmp_path / "vless.txt").write_text("# just a comment\n\nhello world")
@@ -121,17 +139,38 @@ class TestCheckFile:
         await watcher._check_file()
         assert manager.update_proxies.call_args.kwargs.get("source") == "file"
 
+    async def test_deletes_file_after_import(self, tmp_path):
+        watcher, manager = _make_watcher(tmp_path)
+        f = tmp_path / "vless.txt"
+        f.write_text(VALID_URI)
+        await watcher._check_file()
+        assert not f.exists()
+
+    async def test_does_not_delete_file_on_exception(self, tmp_path):
+        watcher, manager = _make_watcher(tmp_path)
+        f = tmp_path / "vless.txt"
+        f.write_text(VALID_URI)
+        manager.update_proxies.side_effect = RuntimeError("boom")
+        await watcher._check_file()
+        assert f.exists()
+
     async def test_handles_exception_gracefully(self, tmp_path):
         watcher, manager = _make_watcher(tmp_path)
         (tmp_path / "vless.txt").write_text(VALID_URI)
         manager.update_proxies.side_effect = RuntimeError("boom")
-        # Should not raise
         await watcher._check_file()
 
 
 class TestLoadOnce:
     async def test_returns_false_when_no_file(self, tmp_path):
         watcher, manager = _make_watcher(tmp_path)
+        result = await watcher.load_once()
+        assert result is False
+        manager.update_proxies.assert_not_called()
+
+    async def test_returns_false_when_empty_file(self, tmp_path):
+        watcher, manager = _make_watcher(tmp_path)
+        (tmp_path / "vless.txt").write_text("")
         result = await watcher.load_once()
         assert result is False
         manager.update_proxies.assert_not_called()
@@ -150,10 +189,18 @@ class TestLoadOnce:
         assert result is True
         manager.update_proxies.assert_called_once()
 
-    async def test_sets_last_hash_so_run_forever_wont_double_load(self, tmp_path):
+    async def test_deletes_file_after_import(self, tmp_path):
+        watcher, manager = _make_watcher(tmp_path)
+        f = tmp_path / "vless.txt"
+        f.write_text(VALID_URI)
+        await watcher.load_once()
+        assert not f.exists()
+
+    async def test_no_double_load_on_restart(self, tmp_path):
         watcher, manager = _make_watcher(tmp_path)
         (tmp_path / "vless.txt").write_text(VALID_URI)
         await watcher.load_once()
-        # _check_file should see the same hash and skip
-        await watcher._check_file()
+        # file is gone — second load_once finds nothing
+        result = await watcher.load_once()
+        assert result is False
         assert manager.update_proxies.call_count == 1
