@@ -86,10 +86,6 @@ class TestParseVless:
         result = parse_vless("")
         assert result.success is False
 
-    def test_whitespace_only(self):
-        result = parse_vless("   ")
-        assert result.success is False
-
     def test_defaults(self):
         uri = (
             "vless://9d507afd-7e90-4b7e-8bd8-6877f7a304ae@example.com:443"

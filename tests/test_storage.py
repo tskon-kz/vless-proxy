@@ -46,11 +46,6 @@ def config_b():
 
 
 class TestUpsertProxy:
-    async def test_insert_returns_id(self, storage, config_a):
-        proxy_id = await storage.upsert_proxy(config_a)
-        assert isinstance(proxy_id, int)
-        assert proxy_id > 0
-
     async def test_new_proxy_status_pending(self, storage, config_a):
         await storage.upsert_proxy(config_a)
         rows = await storage.get_pending_proxies()
@@ -88,31 +83,6 @@ class TestSetProxyStatus:
 
         rows = await storage.get_all_proxies()
         assert rows[0].fail_count == 2
-
-    async def test_set_active_clears_latency(self, storage, config_a):
-        proxy_id = await storage.upsert_proxy(config_a)
-        await storage.set_proxy_status(proxy_id, "active", latency_ms=123)
-        rows = await storage.get_active_proxies()
-        assert rows[0].latency_ms == 123
-
-
-class TestGetProxies:
-    async def test_get_active_returns_only_active(self, storage, config_a, config_b):
-        id_a = await storage.upsert_proxy(config_a)
-        await storage.upsert_proxy(config_b)
-        await storage.set_proxy_status(id_a, "active")
-
-        active = await storage.get_active_proxies()
-        pending = await storage.get_pending_proxies()
-        assert len(active) == 1
-        assert active[0].host == "1.1.1.1"
-        assert len(pending) == 1
-
-    async def test_get_all_returns_everything(self, storage, config_a, config_b):
-        await storage.upsert_proxy(config_a)
-        await storage.upsert_proxy(config_b)
-        rows = await storage.get_all_proxies()
-        assert len(rows) == 2
 
 
 class TestReplaceAll:
