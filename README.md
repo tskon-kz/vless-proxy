@@ -1,78 +1,78 @@
 # VLESS Proxy Manager
 
-Сервис для управления пулом VLESS прокси: принимает ссылки, проверяет живость через xray-core и отдаёт рабочие SOCKS5 прокси через REST API и Telegram-бота.
+A service that manages a pool of VLESS proxies: accepts links, checks liveness via xray-core, and exposes working SOCKS5 proxies through a REST API and Telegram bot.
 
-## Быстрый старт
+[Русская версия](README_RU.md)
 
-### Локальная разработка (macOS / Linux)
+## Quick Start
+
+### Local development (macOS / Linux)
 
 ```bash
-# 1. Установить xray-core
+# 1. Install xray-core
 bash scripts/install-xray.sh
 
-# 2. Настроить окружение
+# 2. Configure
 cp .env.example .env
-nano .env   # обязательно: TG_BOT_TOKEN, TG_ALLOWED_USER_IDS
+nano .env   # required: TG_BOT_TOKEN, TG_ALLOWED_USER_IDS
 
-# 3. Установить зависимости и запустить
+# 3. Install dependencies and run
 uv sync
 uv run python main.py
 ```
 
-### Ubuntu-сервер (systemd)
+### Ubuntu server (systemd)
 
 ```bash
-# 1. Клонировать репозиторий
+# 1. Clone the repository
 git clone <repo> && cd vless-proxy
 
-# 2. Установить xray-core и зависимости
+# 2. Install xray-core and dependencies
 bash scripts/install-xray.sh
 cp .env.example .env && nano .env
 uv sync
 
-# 3. Настроить и запустить службу
-#    Открыть scripts/vless-manager.service,
-#    заменить /path/to/vless-proxy и YOUR_USERNAME на реальные значения
+# 3. Edit the service file — replace /path/to/vless-proxy and YOUR_USERNAME
 nano scripts/vless-manager.service
 sudo cp scripts/vless-manager.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now vless-manager
 ```
 
-Логи:
+View logs:
 ```bash
 journalctl -u vless-manager -f
 ```
 
-## Настройки (.env)
+## Configuration (.env)
 
-| Переменная | По умолчанию | Описание |
+| Variable | Default | Description |
 |---|---|---|
-| `TG_BOT_TOKEN` | — | Токен бота от @BotFather (обязательно) |
-| `TG_ALLOWED_USER_IDS` | — | Telegram ID через запятую (обязательно) |
-| `TG_NOTIFY_CHAT_ID` | — | Куда слать уведомления о смене статуса прокси |
-| `XRAY_BINARY` | `/usr/local/bin/xray` | Путь к бинарнику xray |
-| `XRAY_CONFIG_DIR` | `/tmp/vless-manager` | Временные конфиги xray |
-| `PROXY_PORT_START` | `10800` | Начало диапазона SOCKS5 портов |
-| `PROXY_PORT_END` | `10820` | Конец диапазона SOCKS5 портов |
-| `PROXY_BIND_HOST` | `127.0.0.1` | Адрес прослушивания SOCKS5 |
-| `CHECK_URL` | `https://www.linkedin.com` | URL для проверки живости (должен быть заблокирован без прокси) |
-| `CHECK_TIMEOUT` | `10` | Таймаут одной проверки, сек |
-| `CHECK_INTERVAL` | `300` | Интервал между плановыми проверками, сек |
-| `API_HOST` | `127.0.0.1` | Адрес REST API |
-| `API_PORT` | `8888` | Порт REST API |
-| `API_SECRET_KEY` | — | Bearer-токен для `POST /update` (пусто = эндпоинт отключён) |
-| `DB_PATH` | `./state.db` | Путь к SQLite базе данных |
-| `VLESS_FILE` | `./vless.txt` | Файл со ссылками для автозагрузки |
-| `FILE_CHECK_INTERVAL` | `30` | Интервал проверки файла, сек |
+| `TG_BOT_TOKEN` | — | Bot token from @BotFather (required) |
+| `TG_ALLOWED_USER_IDS` | — | Comma-separated Telegram user IDs (required) |
+| `TG_NOTIFY_CHAT_ID` | — | Chat to receive proxy alive/dead notifications |
+| `XRAY_BINARY` | `/usr/local/bin/xray` | Path to xray binary |
+| `XRAY_CONFIG_DIR` | `/tmp/vless-manager` | Temp directory for xray configs |
+| `PROXY_PORT_START` | `10800` | First port in the SOCKS5 pool |
+| `PROXY_PORT_END` | `10820` | Last port in the SOCKS5 pool |
+| `PROXY_BIND_HOST` | `127.0.0.1` | SOCKS5 bind address |
+| `CHECK_URL` | `https://www.linkedin.com` | URL to verify proxy (should be blocked without proxy) |
+| `CHECK_TIMEOUT` | `10` | Single check timeout, seconds |
+| `CHECK_INTERVAL` | `300` | Interval between scheduled pool checks, seconds |
+| `API_HOST` | `127.0.0.1` | REST API bind address |
+| `API_PORT` | `8888` | REST API port |
+| `API_SECRET_KEY` | — | Bearer token for `POST /update` (empty = endpoint disabled) |
+| `DB_PATH` | `./state.db` | SQLite database path |
+| `VLESS_FILE` | `./vless.txt` | File with VLESS links for auto-loading |
+| `FILE_CHECK_INTERVAL` | `30` | File change polling interval, seconds |
 
-## Как добавить прокси
+## How to Add Proxies
 
-**Через Telegram-бота** — отправьте ссылки `vless://` текстом или `.txt` файлом.
+**Via Telegram bot** — send `vless://` links as text or attach a `.txt` file.
 
-**Через файл** — создайте `vless.txt` со ссылками (по одной на строку, `#` — комментарий). Сервис загрузит файл при старте и удалит его. Если положить файл во время работы — подхватит через `FILE_CHECK_INTERVAL` секунд.
+**Via file** — create `vless.txt` with links (one per line, `#` for comments). The service loads the file on startup and deletes it. Dropping a file while running — picked up within `FILE_CHECK_INTERVAL` seconds.
 
-**Через REST API:**
+**Via REST API:**
 ```bash
 curl -X POST http://127.0.0.1:8888/update \
   -H "Authorization: Bearer YOUR_SECRET_KEY" \
@@ -82,16 +82,16 @@ curl -X POST http://127.0.0.1:8888/update \
 
 ## REST API
 
-| Метод | Путь | Авторизация | Описание |
+| Method | Path | Auth | Description |
 |---|---|---|---|
-| GET | `/health` | — | Проверка живости сервиса |
-| GET | `/status` | — | Статистика пула и список активных прокси |
-| GET | `/proxy/list` | — | Список всех активных прокси |
-| GET | `/proxy/random` | — | Случайный активный прокси |
-| GET | `/proxy/best` | — | Прокси с минимальной задержкой |
-| POST | `/update` | Bearer | Загрузить новые VLESS ссылки |
+| GET | `/health` | — | Service liveness check |
+| GET | `/status` | — | Pool stats and active proxy list |
+| GET | `/proxy/list` | — | All active proxies |
+| GET | `/proxy/random` | — | Random active proxy |
+| GET | `/proxy/best` | — | Lowest-latency proxy |
+| POST | `/update` | Bearer | Submit new VLESS links |
 
-Пример использования прокси из ответа API:
+Using a proxy from the API response:
 ```python
 import httpx
 
@@ -102,15 +102,16 @@ with httpx.Client(proxy=info["proxy_url"]) as client:
     print(client.get("https://example.com").status_code)
 ```
 
-## Подробная документация
+## Documentation
 
-- [Архитектура и обзор](project_docs/00-overview.md)
-- [Конфигурация](project_docs/01-config.md)
-- [Парсер VLESS ссылок](project_docs/02-parser.md)
-- [Хранилище (SQLite)](project_docs/03-storage.md)
-- [Управление xray-core](project_docs/04-xray.md)
-- [Проверка живости](project_docs/05-health.md)
-- [Оркестратор](project_docs/06-manager.md)
-- [REST API](project_docs/07-api.md)
-- [Telegram-бот](project_docs/08-bot.md)
-- [Файловый вотчер](project_docs/09-watcher.md)
+- [Architecture overview](project_docs/en/00-overview.md)
+- [Configuration](project_docs/en/01-config.md)
+- [VLESS link parser](project_docs/en/02-parser.md)
+- [Storage (SQLite)](project_docs/en/03-storage.md)
+- [xray-core management](project_docs/en/04-xray.md)
+- [Health checker](project_docs/en/05-health.md)
+- [Orchestrator](project_docs/en/06-manager.md)
+- [REST API](project_docs/en/07-api.md)
+- [Telegram bot](project_docs/en/08-bot.md)
+- [File watcher](project_docs/en/09-watcher.md)
+- [Deployment (systemd)](project_docs/en/10-systemd.md)
