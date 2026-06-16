@@ -1,0 +1,405 @@
+import json
+import time
+from dataclasses import asdict, dataclass
+
+import aiosqlite
+
+from config import settings
+from core.parser import VlessConfig
+
+_CREATE_PROXIES = """
+CREATE TABLE IF NOT EXISTS proxies (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    raw_uri     TEXT NOT NULL UNIQUE,
+    uuid        TEXT NOT NULL,
+    host        TEXT NOT NULL,
+    port        INTEGER NOT NULL,
+    name        TEXT DEFAULT '',
+    security    TEXT DEFAULT 'none',
+    type        TEXT DEFAULT 'tcp',
+    flow        TEXT DEFAULT '',
+    params_json TEXT DEFAULT '{}',
+    status      TEXT DEFAULT 'pending',
+    last_check  REAL,
+    latency_ms  INTEGER,
+    fail_count  INTEGER DEFAULT 0,
+    created_at  REAL NOT NULL,
+    updated_at  REAL NOT NULL
+)
+"""
+
+_CREATE_PROCESSES = """
+CREATE TABLE IF NOT EXISTS processes (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    proxy_id    INTEGER NOT NULL REFERENCES proxies(id) ON DELETE CASCADE,
+    local_port  INTEGER NOT NULL UNIQUE,
+    pid         INTEGER,
+    config_path TEXT NOT NULL,
+    started_at  REAL,
+    status      TEXT DEFAULT 'stopped'
+)
+"""
+
+_CREATE_UPDATE_LOG = """
+CREATE TABLE IF NOT EXISTS update_log (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    source     TEXT NOT NULL,
+    total      INTEGER,
+    valid      INTEGER,
+    invalid    INTEGER,
+    added      INTEGER,
+    removed    INTEGER,
+    created_at REAL NOT NULL
+)
+"""
+
+
+@dataclass
+class ProxyRow:
+    id: int
+    raw_uri: str
+    host: str
+    port: int
+    name: str
+    security: str
+    type: str
+    flow: str
+    params: dict
+    status: str
+    last_check: float | None
+    latency_ms: int | None
+    fail_count: int
+
+
+@dataclass
+class ProcessRow:
+    id: int
+    proxy_id: int
+    local_port: int
+    pid: int | None
+    config_path: str
+    status: str
+
+
+@dataclass
+class UpdateStats:
+    total: int
+    valid: int
+    invalid: int
+    added: int
+    removed: int
+
+
+@dataclass
+class PoolStats:
+    active: int
+    dead: int
+    pending: int
+    invalid: int
+    running_processes: int
+
+
+def _row_to_proxy(row: aiosqlite.Row) -> ProxyRow:
+    return ProxyRow(
+        id=row["id"],
+        raw_uri=row["raw_uri"],
+        host=row["host"],
+        port=row["port"],
+        name=row["name"] or "",
+        security=row["security"] or "none",
+        type=row["type"] or "tcp",
+        flow=row["flow"] or "",
+        params=json.loads(row["params_json"] or "{}"),
+        status=row["status"],
+        last_check=row["last_check"],
+        latency_ms=row["latency_ms"],
+        fail_count=row["fail_count"] or 0,
+    )
+
+
+def _row_to_process(row: aiosqlite.Row) -> ProcessRow:
+    return ProcessRow(
+        id=row["id"],
+        proxy_id=row["proxy_id"],
+        local_port=row["local_port"],
+        pid=row["pid"],
+        config_path=row["config_path"],
+        status=row["status"],
+    )
+
+
+class Storage:
+    def __init__(self, db_path: str | None = None) -> None:
+        self._db_path = db_path or settings.DB_PATH
+        self._db: aiosqlite.Connection | None = None
+
+    async def init(self) -> None:
+        self._db = await aiosqlite.connect(self._db_path)
+        self._db.row_factory = aiosqlite.Row
+        await self._db.execute("PRAGMA journal_mode=WAL")
+        await self._db.execute("PRAGMA foreign_keys=ON")
+        await self._db.execute(_CREATE_PROXIES)
+        await self._db.execute(_CREATE_PROCESSES)
+        await self._db.execute(_CREATE_UPDATE_LOG)
+        await self._db.commit()
+
+    @property
+    def _conn(self) -> aiosqlite.Connection:
+        if self._db is None:
+            raise RuntimeError("Storage.init() has not been called")
+        return self._db
+
+    async def upsert_proxy(self, config: VlessConfig) -> int:
+        now = time.time()
+        params_json = json.dumps(asdict(config))
+        async with self._conn.execute(
+            """
+            INSERT INTO proxies
+                (raw_uri, uuid, host, port, name, security, type, flow,
+                 params_json, status, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+            ON CONFLICT(raw_uri) DO UPDATE SET
+                uuid        = excluded.uuid,
+                host        = excluded.host,
+                port        = excluded.port,
+                name        = excluded.name,
+                security    = excluded.security,
+                type        = excluded.type,
+                flow        = excluded.flow,
+                params_json = excluded.params_json,
+                updated_at  = excluded.updated_at
+            RETURNING id
+            """,
+            (
+                config.raw_uri, config.uuid, config.host, config.port,
+                config.name, config.security, config.type, config.flow,
+                params_json, now, now,
+            ),
+        ) as cursor:
+            row = await cursor.fetchone()
+        await self._conn.commit()
+        return row["id"]
+
+    async def set_proxy_status(
+        self,
+        proxy_id: int,
+        status: str,
+        latency_ms: int | None = None,
+    ) -> None:
+        now = time.time()
+        if status == "active":
+            await self._conn.execute(
+                """
+                UPDATE proxies
+                SET status = ?, last_check = ?, latency_ms = ?,
+                    fail_count = 0, updated_at = ?
+                WHERE id = ?
+                """,
+                (status, now, latency_ms, now, proxy_id),
+            )
+        elif status == "dead":
+            await self._conn.execute(
+                """
+                UPDATE proxies
+                SET status = ?, last_check = ?, latency_ms = NULL,
+                    fail_count = fail_count + 1, updated_at = ?
+                WHERE id = ?
+                """,
+                (status, now, now, proxy_id),
+            )
+        else:
+            await self._conn.execute(
+                """
+                UPDATE proxies
+                SET status = ?, last_check = ?, latency_ms = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (status, now, latency_ms, now, proxy_id),
+            )
+        await self._conn.commit()
+
+    async def get_active_proxies(self) -> list[ProxyRow]:
+        async with self._conn.execute(
+            "SELECT * FROM proxies WHERE status = 'active'"
+        ) as cursor:
+            return [_row_to_proxy(r) async for r in cursor]
+
+    async def get_pending_proxies(self) -> list[ProxyRow]:
+        async with self._conn.execute(
+            "SELECT * FROM proxies WHERE status = 'pending'"
+        ) as cursor:
+            return [_row_to_proxy(r) async for r in cursor]
+
+    async def get_all_proxies(self) -> list[ProxyRow]:
+        async with self._conn.execute("SELECT * FROM proxies") as cursor:
+            return [_row_to_proxy(r) async for r in cursor]
+
+    async def replace_all(
+        self, configs: list[VlessConfig], source: str
+    ) -> UpdateStats:
+        now = time.time()
+        new_uris = {c.raw_uri for c in configs}
+
+        async with self._conn.execute(
+            "SELECT id, raw_uri FROM proxies WHERE status != 'dead'"
+        ) as cursor:
+            existing = {r["raw_uri"]: r["id"] async for r in cursor}
+
+        added = 0
+        removed = 0
+
+        async with self._conn.execute("BEGIN"):
+            pass
+
+        try:
+            for config in configs:
+                if config.raw_uri not in existing:
+                    added += 1
+                params_json = json.dumps(asdict(config))
+                await self._conn.execute(
+                    """
+                    INSERT INTO proxies
+                        (raw_uri, uuid, host, port, name, security, type, flow,
+                         params_json, status, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+                    ON CONFLICT(raw_uri) DO UPDATE SET
+                        uuid        = excluded.uuid,
+                        host        = excluded.host,
+                        port        = excluded.port,
+                        name        = excluded.name,
+                        security    = excluded.security,
+                        type        = excluded.type,
+                        flow        = excluded.flow,
+                        params_json = excluded.params_json,
+                        updated_at  = excluded.updated_at
+                    """,
+                    (
+                        config.raw_uri, config.uuid, config.host, config.port,
+                        config.name, config.security, config.type, config.flow,
+                        params_json, now, now,
+                    ),
+                )
+
+            for uri, proxy_id in existing.items():
+                if uri not in new_uris:
+                    removed += 1
+                    await self._conn.execute(
+                        "UPDATE proxies SET status = 'dead', updated_at = ? WHERE id = ?",
+                        (now, proxy_id),
+                    )
+
+            stats = UpdateStats(
+                total=len(configs),
+                valid=len(configs),
+                invalid=0,
+                added=added,
+                removed=removed,
+            )
+            await self._conn.execute(
+                """
+                INSERT INTO update_log
+                    (source, total, valid, invalid, added, removed, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (source, stats.total, stats.valid, stats.invalid,
+                 stats.added, stats.removed, now),
+            )
+            await self._conn.commit()
+        except Exception:
+            await self._conn.rollback()
+            raise
+
+        return stats
+
+    async def get_process(self, proxy_id: int) -> ProcessRow | None:
+        async with self._conn.execute(
+            "SELECT * FROM processes WHERE proxy_id = ?", (proxy_id,)
+        ) as cursor:
+            row = await cursor.fetchone()
+        return _row_to_process(row) if row else None
+
+    async def upsert_process(
+        self, proxy_id: int, local_port: int, config_path: str
+    ) -> None:
+        await self._conn.execute(
+            """
+            INSERT INTO processes (proxy_id, local_port, config_path, status)
+            VALUES (?, ?, ?, 'stopped')
+            ON CONFLICT(local_port) DO UPDATE SET
+                proxy_id    = excluded.proxy_id,
+                config_path = excluded.config_path,
+                status      = 'stopped',
+                pid         = NULL
+            """,
+            (proxy_id, local_port, config_path),
+        )
+        await self._conn.commit()
+
+    async def set_process_pid(
+        self, proxy_id: int, pid: int | None, status: str
+    ) -> None:
+        now = time.time()
+        await self._conn.execute(
+            """
+            UPDATE processes
+            SET pid = ?, status = ?, started_at = ?
+            WHERE proxy_id = ?
+            """,
+            (pid, status, now if pid is not None else None, proxy_id),
+        )
+        await self._conn.commit()
+
+    async def get_available_port(self) -> int | None:
+        async with self._conn.execute(
+            "SELECT local_port FROM processes WHERE status = 'running'"
+        ) as cursor:
+            used = {r["local_port"] async for r in cursor}
+
+        for port in range(settings.PROXY_PORT_START, settings.PROXY_PORT_END + 1):
+            if port not in used:
+                return port
+        return None
+
+    async def log_update(self, source: str, stats: UpdateStats) -> None:
+        now = time.time()
+        await self._conn.execute(
+            """
+            INSERT INTO update_log
+                (source, total, valid, invalid, added, removed, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (source, stats.total, stats.valid, stats.invalid,
+             stats.added, stats.removed, now),
+        )
+        await self._conn.commit()
+
+    async def get_stats(self) -> PoolStats:
+        async with self._conn.execute(
+            """
+            SELECT
+                SUM(status = 'active')  AS active,
+                SUM(status = 'dead')    AS dead,
+                SUM(status = 'pending') AS pending,
+                SUM(status = 'invalid') AS invalid
+            FROM proxies
+            """
+        ) as cursor:
+            row = await cursor.fetchone()
+
+        async with self._conn.execute(
+            "SELECT COUNT(*) AS cnt FROM processes WHERE status = 'running'"
+        ) as cursor:
+            proc_row = await cursor.fetchone()
+
+        return PoolStats(
+            active=row["active"] or 0,
+            dead=row["dead"] or 0,
+            pending=row["pending"] or 0,
+            invalid=row["invalid"] or 0,
+            running_processes=proc_row["cnt"] or 0,
+        )
+
+    async def close(self) -> None:
+        if self._db is not None:
+            await self._db.close()
+            self._db = None
