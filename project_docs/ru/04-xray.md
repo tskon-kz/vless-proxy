@@ -1,5 +1,7 @@
 # Управление xray-core (`core/xray.py`)
 
+[English](../en/04-xray.md)
+
 ## Обзор
 
 Модуль делает две вещи:

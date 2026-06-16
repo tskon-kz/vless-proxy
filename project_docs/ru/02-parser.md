@@ -1,5 +1,7 @@
 # Парсер VLESS-ссылок (`core/parser.py`)
 
+[English](../en/02-parser.md)
+
 ## Формат VLESS URI
 
 ```

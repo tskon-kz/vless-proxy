@@ -1,5 +1,7 @@
 # Деплой на Ubuntu (systemd)
 
+[English](../en/10-systemd.md)
+
 ## Требования
 
 - Ubuntu 22.04+

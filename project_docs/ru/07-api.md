@@ -1,5 +1,7 @@
 # REST API (`api/server.py`)
 
+[English](../en/07-api.md)
+
 ## Создание приложения
 
 ```python

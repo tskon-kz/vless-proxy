@@ -1,5 +1,7 @@
 # Хранилище (`core/storage.py`)
 
+[English](../en/03-storage.md)
+
 ## Обзор
 
 Тонкая обёртка над SQLite через aiosqlite. Все методы асинхронные. БД инициализируется вызовом `await storage.init()`.

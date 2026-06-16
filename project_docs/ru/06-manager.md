@@ -1,5 +1,7 @@
 # Оркестратор (`core/manager.py`)
 
+[English](../en/06-manager.md)
+
 ## Роль
 
 `ProxyManager` — центральный компонент который связывает Storage, XrayProcessPool и HealthChecker. Все входные каналы (бот, файл, API) работают только через него.

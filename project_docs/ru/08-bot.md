@@ -1,5 +1,7 @@
 # Telegram-бот (`bot/bot.py`, `bot/strings.py`)
 
+[English](../en/08-bot.md)
+
 ## Создание бота
 
 ```python
