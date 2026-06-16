@@ -32,7 +32,7 @@ uv sync
 
 # 3. Настроить и запустить службу
 cp scripts/vless-manager.service.example scripts/vless-manager.service
-nano scripts/vless-manager.service   # прописать WorkingDirectory и User
+nano scripts/vless-manager.service   # прописать WorkingDirectory (вместо `/root`) и User (вместо `root`)
 sudo cp scripts/vless-manager.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now vless-manager

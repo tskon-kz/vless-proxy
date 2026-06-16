@@ -4,10 +4,10 @@ After=network.target
 
 [Service]
 Type=simple
-User=YOUR_USERNAME
-WorkingDirectory=/path/to/vless-proxy
-EnvironmentFile=/path/to/vless-proxy/.env
-ExecStart=/path/to/vless-proxy/.venv/bin/python main.py
+User=root
+WorkingDirectory=/root/vless-proxy
+EnvironmentFile=/root/vless-proxy/.env
+ExecStart=/root/vless-proxy/.venv/bin/python main.py
 Restart=on-failure
 RestartSec=5
 KillSignal=SIGTERM
