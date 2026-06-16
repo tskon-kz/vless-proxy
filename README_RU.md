@@ -31,9 +31,8 @@ cp .env.example .env && nano .env
 uv sync
 
 # 3. Настроить и запустить службу
-#    Открыть scripts/vless-manager.service,
-#    заменить /path/to/vless-proxy и YOUR_USERNAME на реальные значения
-nano scripts/vless-manager.service
+cp scripts/vless-manager.service.example scripts/vless-manager.service
+nano scripts/vless-manager.service   # прописать WorkingDirectory и User
 sudo cp scripts/vless-manager.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now vless-manager

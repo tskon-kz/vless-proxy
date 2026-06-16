@@ -32,8 +32,9 @@ bash scripts/install-xray.sh
 cp .env.example .env && nano .env
 uv sync
 
-# 3. Edit the service file — replace /path/to/vless-proxy and YOUR_USERNAME
-nano scripts/vless-manager.service
+# 3. Configure and install the systemd service
+cp scripts/vless-manager.service.example scripts/vless-manager.service
+nano scripts/vless-manager.service   # set WorkingDirectory and User
 sudo cp scripts/vless-manager.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now vless-manager

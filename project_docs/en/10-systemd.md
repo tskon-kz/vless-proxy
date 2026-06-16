@@ -56,12 +56,20 @@ uv sync
 
 ### 5. Configure the systemd service
 
-Open `scripts/vless-manager.service` and replace:
+The repository contains a template. Copy it and fill in the real values:
+
+```bash
+cp scripts/vless-manager.service.example scripts/vless-manager.service
+nano scripts/vless-manager.service
+```
+
+Replace:
 - `/path/to/vless-proxy` → actual path (e.g. `/opt/vless-proxy`)
 - `YOUR_USERNAME` → the user to run the service as
 
+The edited file is listed in `.gitignore`, so it will not appear in `git status`.
+
 ```bash
-nano scripts/vless-manager.service
 sudo cp scripts/vless-manager.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable vless-manager
@@ -105,7 +113,7 @@ uv sync
 systemctl restart vless-manager
 ```
 
-## Service file (`scripts/vless-manager.service`)
+## Service file template (`scripts/vless-manager.service.example`)
 
 ```ini
 [Unit]

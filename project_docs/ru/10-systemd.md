@@ -56,12 +56,20 @@ uv sync
 
 ### 5. Настроить systemd-службу
 
-Открыть `scripts/vless-manager.service` и заменить:
-- `/path/to/vless-proxy` → реальный путь (например `/opt/vless-proxy`)
-- `YOUR_USERNAME` → имя пользователя от которого запускать
+В репозитории лежит шаблон. Скопируйте его и заполните реальные значения:
 
 ```bash
+cp scripts/vless-manager.service.example scripts/vless-manager.service
 nano scripts/vless-manager.service
+```
+
+Заменить:
+- `/path/to/vless-proxy` → реальный путь (например `/opt/vless-proxy`)
+- `YOUR_USERNAME` → имя пользователя, от которого запускать
+
+Отредактированный файл добавлен в `.gitignore` — он не будет появляться в `git status`.
+
+```bash
 sudo cp scripts/vless-manager.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable vless-manager
@@ -105,7 +113,7 @@ uv sync
 systemctl restart vless-manager
 ```
 
-## Файл службы (`scripts/vless-manager.service`)
+## Шаблон файла службы (`scripts/vless-manager.service.example`)
 
 ```ini
 [Unit]

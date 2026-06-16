@@ -26,6 +26,9 @@ ENV/
 *.swp
 *.swo
 
+# Systemd service file (generated from scripts/vless-manager.service.example)
+scripts/vless-manager.service
+
 # Runtime state
 state.db
 state.db-shm
