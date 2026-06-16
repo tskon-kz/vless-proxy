@@ -38,6 +38,18 @@ echo "Detected OS: $os, architecture: $arch"
 echo "Downloading $archive ..."
 curl -fsSL "$BASE_URL/$archive" -o "$TMP_DIR/$archive"
 
+if ! command -v unzip &>/dev/null; then
+    echo "Installing unzip ..."
+    if command -v apt-get &>/dev/null; then
+        apt-get install -y unzip
+    elif command -v yum &>/dev/null; then
+        yum install -y unzip
+    else
+        echo "Cannot install unzip: no supported package manager found" >&2
+        exit 1
+    fi
+fi
+
 echo "Extracting ..."
 unzip -q "$TMP_DIR/$archive" -d "$TMP_DIR"
 
