@@ -2,18 +2,6 @@
 
 [English](../en/08-bot.md)
 
-## Создание бота
-
-```python
-from bot.bot import create_bot
-bot, dp = create_bot(manager)
-await dp.start_polling(bot, allowed_updates=["message"])
-```
-
-`create_bot` возвращает `(Bot, Dispatcher)`. `manager` инжектируется в хендлеры через `dp["manager"] = manager`.
-
-Если задан `TG_BOT_PROXY`, `Bot` создаётся с `AiohttpSession(proxy=...)` — все запросы к Telegram API идут через указанный прокси (SOCKS5/HTTP). Это нужно для работы на серверах, где Telegram заблокирован.
-
 ## Доступ
 
 Все сообщения проходят через `AccessMiddleware`. Бот молча игнорирует сообщения от пользователей не из `TG_ALLOWED_USER_IDS` — нет ни ошибок, ни ответов.
@@ -27,13 +15,16 @@ await dp.start_polling(bot, allowed_updates=["message"])
 | `/status` | Состояние пула: счётчики + список активных прокси с портами и задержкой |
 | `/check` | Запустить немедленную проверку всех прокси (`manager.force_recheck()`) |
 
-## Добавление прокси
+## Добавление proxy
 
 **Текстом** — если сообщение содержит `vless://`, извлекаются все ссылки из текста и передаются в `manager.update_proxies(source="telegram")`.
 
 **Файлом** — принимаются `.txt` файлы и файлы без расширения (`mime_type=None`). Содержимое обрабатывается как текст. Другие форматы отклоняются с сообщением об ошибке.
 
 Оба способа показывают отчёт: сколько получено, валидных, невалидных. После этого запускается проверка живости в фоне.
+
+## Proxy для бота
+Если задан `TG_BOT_PROXY`, `Bot` создаётся с `AiohttpSession(proxy=...)` — все запросы к Telegram API идут через указанный прокси (SOCKS5/HTTP). Это нужно для работы на серверах, где Telegram заблокирован.
 
 ## Уведомления о смене статуса
 

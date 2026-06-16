@@ -38,35 +38,50 @@ async def run() -> None:
         log_level="warning",
     )
     server = uvicorn.Server(uvicorn_config)
-
-    loop = asyncio.get_running_loop()
-
-    def _handle_signal() -> None:
-        logger.info("shutdown signal received")
-        server.should_exit = True
-
-    for sig in (signal.SIGTERM, signal.SIGINT):
-        loop.add_signal_handler(sig, _handle_signal)
+    server.install_signal_handlers = lambda: None
 
     logger.info(
         "API listening on http://%s:%d", settings.API_HOST, settings.API_PORT
     )
 
-    polling_task = asyncio.create_task(
-        dp.start_polling(bot, allowed_updates=["message"])
-    )
+    shutdown = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, shutdown.set)
+
+    async def polling_loop() -> None:
+        retry_delay = 5
+        while True:
+            try:
+                await dp.start_polling(bot, allowed_updates=["message"])
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning("bot polling error: %s, retrying in %ds", exc, retry_delay)
+                await asyncio.sleep(retry_delay)
+                retry_delay = min(retry_delay * 2, 60)
+            else:
+                retry_delay = 5
+
+    server_task = asyncio.create_task(server.serve())
+    polling_task = asyncio.create_task(polling_loop())
+
+    await shutdown.wait()
+    logger.info("shutdown signal received")
+
+    server.should_exit = True
+    polling_task.cancel()
 
     try:
-        await server.serve()
-    finally:
-        polling_task.cancel()
-        try:
-            await polling_task
-        except asyncio.CancelledError:
-            pass
-        await bot.session.close()
-        await manager.shutdown()
-        logger.info("service stopped")
+        await asyncio.wait_for(
+            asyncio.gather(server_task, polling_task, return_exceptions=True),
+            timeout=5.0,
+        )
+    except asyncio.TimeoutError:
+        pass
+    await bot.session.close()
+    await manager.shutdown()
+    logger.info("service stopped")
 
 
 def main() -> None:

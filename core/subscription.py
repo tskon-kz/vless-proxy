@@ -31,17 +31,22 @@ class SubscriptionFetcher:
     @staticmethod
     def _decode_body(body: str) -> str:
         try:
-            body_clean = body.strip().replace("\n", "").replace("\r", "")
-            decoded = base64.b64decode(body_clean + "==").decode("utf-8")
-            if "vless://" in decoded:
-                return decoded
+            body_clean = body.strip().replace("\n", "").replace("\r", "").rstrip("=")
+            body_clean += "=" * (-len(body_clean) % 4)
+            for decode in (base64.b64decode, base64.urlsafe_b64decode):
+                try:
+                    decoded = decode(body_clean).decode("utf-8")
+                    if "vless://" in decoded:
+                        return decoded
+                except Exception:
+                    continue
         except Exception:
             pass
         return body
 
     async def fetch(self, url: str) -> FetchResult:
         timeout = aiohttp.ClientTimeout(total=settings.SUBSCRIPTION_TIMEOUT)
-        headers = {"User-Agent": "clash/1.18.0"}
+        headers = {"User-Agent": "v2rayN/6.0"}
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(url, timeout=timeout, headers=headers) as resp:

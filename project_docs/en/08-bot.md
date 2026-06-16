@@ -2,18 +2,6 @@
 
 [Русский](../ru/08-bot.md)
 
-## Creating the bot
-
-```python
-from bot.bot import create_bot
-bot, dp = create_bot(manager)
-await dp.start_polling(bot, allowed_updates=["message"])
-```
-
-`create_bot` returns `(Bot, Dispatcher)`. The `manager` is injected into handlers via `dp["manager"] = manager`.
-
-When `TG_BOT_PROXY` is set, `Bot` is created with `AiohttpSession(proxy=...)` — all Telegram API requests go through the specified proxy (SOCKS5/HTTP). Needed when the server cannot reach Telegram directly.
-
 ## Access control
 
 All messages pass through `AccessMiddleware`. The bot silently ignores messages from users not in `TG_ALLOWED_USER_IDS` — no errors, no replies.
@@ -34,6 +22,9 @@ All messages pass through `AccessMiddleware`. The bot silently ignores messages 
 **As a file** — `.txt` files and files without extension (`mime_type=None`) are accepted. Content is processed as plain text. Other formats are rejected with an error message.
 
 Both methods reply with a report: total received, valid, invalid. A liveness check is then started in the background.
+
+## Proxy for the tg-bot
+When `TG_BOT_PROXY` is set, `Bot` is created with `AiohttpSession(proxy=...)` — all Telegram API requests go through the specified proxy (SOCKS5/HTTP). Needed when the server cannot reach Telegram directly.
 
 ## Status change notifications
 
