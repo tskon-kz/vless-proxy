@@ -102,6 +102,20 @@ with httpx.Client(proxy=info["proxy_url"]) as client:
     print(client.get("https://example.com").status_code)
 ```
 
+### External access
+
+By default both the API and SOCKS5 ports listen on `127.0.0.1` only. To expose them to other machines:
+
+```env
+API_HOST=0.0.0.0          # API reachable from outside
+PROXY_BIND_HOST=1.2.3.4   # use the server's real public IP, not 0.0.0.0
+```
+
+Setting `PROXY_BIND_HOST` to the real IP is important: the API embeds it into `proxy_url` in every response (`socks5://<PROXY_BIND_HOST>:<port>`), so clients receive a URL they can actually connect to.
+
+> **Security note:** GET endpoints (`/proxy/list`, `/status`, etc.) have no authentication — anyone who can reach the API can see your proxy list. Restrict access via a firewall, or put the API behind a reverse proxy with auth.
+> `POST /update` is protected by `API_SECRET_KEY` (or hidden entirely when the key is not set).
+
 ## Documentation
 
 - [Architecture overview](project_docs/en/00-overview.md)
