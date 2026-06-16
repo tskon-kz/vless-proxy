@@ -5,6 +5,7 @@ import signal
 import uvicorn
 
 from api.server import create_api
+from bot.bot import create_bot
 from config import settings
 from core.manager import ProxyManager
 from core.storage import Storage
@@ -22,7 +23,9 @@ async def run() -> None:
 
     await manager.startup()
 
+    bot, dp = create_bot(manager)
     api_app = create_api(manager)
+
     uvicorn_config = uvicorn.Config(
         api_app,
         host=settings.API_HOST,
@@ -33,7 +36,7 @@ async def run() -> None:
 
     loop = asyncio.get_running_loop()
 
-    def _handle_signal():
+    def _handle_signal() -> None:
         logger.info("shutdown signal received")
         server.should_exit = True
 
@@ -44,9 +47,19 @@ async def run() -> None:
         "API listening on http://%s:%d", settings.API_HOST, settings.API_PORT
     )
 
+    polling_task = asyncio.create_task(
+        dp.start_polling(bot, allowed_updates=["message"])
+    )
+
     try:
         await server.serve()
     finally:
+        polling_task.cancel()
+        try:
+            await polling_task
+        except asyncio.CancelledError:
+            pass
+        await bot.session.close()
         await manager.shutdown()
         logger.info("service stopped")
 

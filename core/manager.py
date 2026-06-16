@@ -2,6 +2,7 @@ import asyncio
 import logging
 import random
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from config import settings
@@ -53,6 +54,7 @@ class ProxyManager:
         self._health_task: asyncio.Task | None = None
         self._started_at: float = time.time()
         self._background_tasks: set[asyncio.Task] = set()
+        self.notify_callback: Callable[[ProxyRow, HealthResult], Awaitable[None]] | None = None
 
     def _create_task(self, coro) -> asyncio.Task:
         task = asyncio.create_task(coro)
@@ -162,6 +164,12 @@ class ProxyManager:
         else:
             if self.process_pool.get_process(result.proxy_id) is not None:
                 await self.process_pool.stop_proxy(result.proxy_id)
+
+        if self.notify_callback and settings.TG_NOTIFY_CHAT_ID:
+            try:
+                await self.notify_callback(proxy, result)
+            except Exception as exc:
+                logger.warning("notify_callback failed: %s", exc)
 
     async def get_status(self) -> ManagerStatus:
         pool_stats = await self.storage.get_stats()

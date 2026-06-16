@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     # Telegram
     TG_BOT_TOKEN: str
     TG_ALLOWED_USER_IDS: List[int] = []
+    TG_NOTIFY_CHAT_ID: int | None = None
 
     # xray
     XRAY_BINARY: str = "/usr/local/bin/xray"
