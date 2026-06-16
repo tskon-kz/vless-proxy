@@ -222,6 +222,18 @@ class HealthChecker:
 
         return result
 
+    async def check_one_by_id(
+        self,
+        proxy_id: int,
+        on_status_change: Callable | None = None,
+    ) -> HealthResult | None:
+        proxy = await self._storage.get_proxy_by_id(proxy_id)
+        if proxy is None:
+            return None
+        config = vless_config_from_proxy(proxy)
+        async with self._semaphore:
+            return await self.check_one(proxy, config, on_status_change)
+
     async def check_all_active(
         self, on_status_change: Callable | None = None
     ) -> list[HealthResult]:

@@ -100,6 +100,94 @@ async def handle_links(message: Message, manager: ProxyManager) -> None:
     await process_links(message, message.text, manager)
 
 
+@router.message(Command("sub_add"))
+async def cmd_sub_add(message: Message, manager: ProxyManager) -> None:
+    if manager.subscription_manager is None:
+        return
+    text = message.text or ""
+    parts = text.split(maxsplit=2)
+    if len(parts) < 2:
+        await message.answer(strings.SUB_ADD_USAGE)
+        return
+    url = parts[1]
+    name = parts[2] if len(parts) > 2 else ""
+    if not url.startswith(("http://", "https://")):
+        await message.answer(strings.SUB_ADD_INVALID_URL)
+        return
+    await message.answer(strings.SUB_ADDING)
+    try:
+        sub_id, result = await manager.subscription_manager.add_subscription(url, name)
+        if result.success:
+            await message.answer(strings.sub_added(sub_id, name, url, result.count))
+        else:
+            await message.answer(strings.sub_add_error(url, result.error))
+    except Exception as exc:
+        await message.answer(strings.sub_add_error(url, str(exc)))
+
+
+@router.message(Command("sub_list"))
+async def cmd_sub_list(message: Message, manager: ProxyManager) -> None:
+    if manager.subscription_manager is None:
+        return
+    subs = await manager.subscription_manager.list_subscriptions()
+    if not subs:
+        await message.answer(strings.SUB_LIST_EMPTY)
+        return
+    await message.answer(strings.sub_list(subs))
+
+
+@router.message(Command("sub_refresh"))
+async def cmd_sub_refresh(message: Message, manager: ProxyManager) -> None:
+    if manager.subscription_manager is None:
+        return
+    text = message.text or ""
+    parts = text.split()
+    await message.answer(strings.SUB_REFRESHING)
+    if len(parts) < 2:
+        results = await manager.subscription_manager.refresh_all()
+        await message.answer(strings.sub_refresh_result(results))
+        return
+    try:
+        sub_id = int(parts[1])
+    except ValueError:
+        await message.answer(strings.SUB_ID_INVALID)
+        return
+    sub = await manager.subscription_manager.get_subscription(sub_id)
+    if sub is None:
+        await message.answer(strings.sub_not_found(sub_id))
+        return
+    result = await manager.subscription_manager.refresh_subscription(sub_id)
+    await message.answer(strings.sub_refresh_one_result(result))
+
+
+@router.message(Command("sub_remove"))
+async def cmd_sub_remove(message: Message, manager: ProxyManager) -> None:
+    if manager.subscription_manager is None:
+        return
+    text = message.text or ""
+    parts = text.split()
+    if len(parts) < 2:
+        await message.answer(strings.SUB_REMOVE_USAGE)
+        return
+    try:
+        sub_id = int(parts[1])
+    except ValueError:
+        await message.answer(strings.SUB_ID_INVALID)
+        return
+    sub = await manager.subscription_manager.get_subscription(sub_id)
+    if sub is None:
+        await message.answer(strings.sub_not_found(sub_id))
+        return
+    confirmed = len(parts) > 2 and parts[2] == "confirm"
+    if not confirmed:
+        stats = await manager.storage.get_subscription_stats(sub_id)
+        total = stats.total if stats else 0
+        await message.answer(strings.sub_remove_confirm(sub_id, sub.name, sub.url, total))
+        return
+    await manager.remove_subscription(sub_id)
+    await message.answer(strings.sub_removed(sub_id, sub.name, sub.url))
+
+
 @router.message(F.document)
 async def handle_document(message: Message, bot: Bot, manager: ProxyManager) -> None:
     doc = message.document

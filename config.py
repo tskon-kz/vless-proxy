@@ -47,6 +47,11 @@ class Settings(BaseSettings):
     VLESS_FILE: str = "./vless.txt"
     FILE_CHECK_INTERVAL: int = 30
 
+    # Subscriptions
+    SUBSCRIPTION_FETCH_INTERVAL: int = 3600
+    SUBSCRIPTION_TIMEOUT: int = 30
+    SUBSCRIPTION_MAX_RETRIES: int = 3
+
     def validate(self) -> None:
         if not self.TG_BOT_TOKEN:
             raise ValueError("TG_BOT_TOKEN is required")

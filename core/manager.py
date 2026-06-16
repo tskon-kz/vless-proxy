@@ -9,6 +9,7 @@ from config import settings
 from core.health import HealthChecker, HealthResult, vless_config_from_proxy
 from core.parser import parse_vless, parse_vless_list
 from core.storage import PoolStats, ProxyRow, Storage
+from core.subscription import SubscriptionManager
 from core.xray import XrayProcessPool
 
 logger = logging.getLogger(__name__)
@@ -50,6 +51,7 @@ class ProxyManager:
         self.storage = storage
         self.process_pool = XrayProcessPool(storage)
         self.health_checker = HealthChecker(storage)
+        self.subscription_manager: SubscriptionManager | None = None
         self._lock = asyncio.Lock()
         self._health_task: asyncio.Task | None = None
         self._started_at: float = time.time()
@@ -65,6 +67,8 @@ class ProxyManager:
     async def startup(self) -> None:
         await self.storage.init()
         self._started_at = time.time()
+
+        self.subscription_manager = SubscriptionManager(self.storage, self)
 
         active = await self.storage.get_active_proxies()
         restored = 0
@@ -85,6 +89,8 @@ class ProxyManager:
                 )
             )
 
+        await self.subscription_manager.startup()
+
         self._health_task = asyncio.create_task(
             self.health_checker.run_forever(
                 on_status_change=self._status_change_callback
@@ -92,6 +98,9 @@ class ProxyManager:
         )
 
     async def shutdown(self) -> None:
+        if self.subscription_manager:
+            await self.subscription_manager.shutdown()
+
         if self._health_task is not None:
             self._health_task.cancel()
             try:
@@ -164,12 +173,44 @@ class ProxyManager:
         else:
             if self.process_pool.get_process(result.proxy_id) is not None:
                 await self.process_pool.stop_proxy(result.proxy_id)
+            if proxy.subscription_id and self.subscription_manager:
+                await self._replace_dead_from_subscription(proxy)
 
         if self.notify_callback and settings.TG_NOTIFY_CHAT_ID:
             try:
                 await self.notify_callback(proxy, result)
             except Exception as exc:
                 logger.warning("notify_callback failed: %s", exc)
+
+    async def _replace_dead_from_subscription(self, dead_proxy: ProxyRow) -> None:
+        sub_id = dead_proxy.subscription_id
+        if sub_id is None:
+            return
+        candidate = await self.storage.get_pending_by_subscription(sub_id)
+        if candidate is None:
+            return
+        logger.info(
+            "replacing dead proxy_id=%d with candidate proxy_id=%d from subscription %d",
+            dead_proxy.id,
+            candidate.id,
+            sub_id,
+        )
+        self._create_task(
+            self.health_checker.check_one_by_id(
+                candidate.id,
+                on_status_change=self._status_change_callback,
+            )
+        )
+
+    async def remove_subscription(self, sub_id: int) -> None:
+        if self.subscription_manager is None:
+            return
+        proxies = await self.storage.get_all_proxies()
+        sub_proxies = [p for p in proxies if p.subscription_id == sub_id]
+        await self.subscription_manager.remove_subscription(sub_id)
+        for proxy in sub_proxies:
+            if self.process_pool.get_process(proxy.id) is not None:
+                await self.process_pool.stop_proxy(proxy.id)
 
     async def get_status(self) -> ManagerStatus:
         pool_stats = await self.storage.get_stats()

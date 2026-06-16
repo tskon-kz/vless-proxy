@@ -53,6 +53,20 @@ CREATE TABLE IF NOT EXISTS update_log (
 )
 """
 
+_CREATE_SUBSCRIPTIONS = """
+CREATE TABLE IF NOT EXISTS subscriptions (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    url              TEXT NOT NULL UNIQUE,
+    name             TEXT DEFAULT '',
+    fetch_interval   INTEGER DEFAULT 3600,
+    last_fetch       REAL,
+    last_fetch_count INTEGER DEFAULT 0,
+    fail_count       INTEGER DEFAULT 0,
+    created_at       REAL NOT NULL,
+    updated_at       REAL NOT NULL
+)
+"""
+
 
 @dataclass
 class ProxyRow:
@@ -69,6 +83,8 @@ class ProxyRow:
     last_check: float | None
     latency_ms: int | None
     fail_count: int
+    source: str = "manual"
+    subscription_id: int | None = None
 
 
 @dataclass
@@ -99,7 +115,40 @@ class PoolStats:
     running_processes: int
 
 
+@dataclass
+class SubscriptionRow:
+    id: int
+    url: str
+    name: str
+    fetch_interval: int
+    last_fetch: float | None
+    last_fetch_count: int
+    fail_count: int
+    created_at: float
+    updated_at: float
+
+
+@dataclass
+class SubscriptionStats:
+    id: int
+    name: str
+    url: str
+    active: int
+    pending: int
+    dead: int
+    total: int
+    last_fetch: float | None
+    fail_count: int
+    fetch_interval: int
+
+
 def _row_to_proxy(row: aiosqlite.Row) -> ProxyRow:
+    try:
+        source = row["source"] or "manual"
+        subscription_id = row["subscription_id"]
+    except (IndexError, KeyError):
+        source = "manual"
+        subscription_id = None
     return ProxyRow(
         id=row["id"],
         raw_uri=row["raw_uri"],
@@ -114,6 +163,22 @@ def _row_to_proxy(row: aiosqlite.Row) -> ProxyRow:
         last_check=row["last_check"],
         latency_ms=row["latency_ms"],
         fail_count=row["fail_count"] or 0,
+        source=source,
+        subscription_id=subscription_id,
+    )
+
+
+def _row_to_subscription(row: aiosqlite.Row) -> SubscriptionRow:
+    return SubscriptionRow(
+        id=row["id"],
+        url=row["url"],
+        name=row["name"] or "",
+        fetch_interval=row["fetch_interval"] or 3600,
+        last_fetch=row["last_fetch"],
+        last_fetch_count=row["last_fetch_count"] or 0,
+        fail_count=row["fail_count"] or 0,
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
     )
 
 
@@ -141,6 +206,16 @@ class Storage:
         await self._db.execute(_CREATE_PROXIES)
         await self._db.execute(_CREATE_PROCESSES)
         await self._db.execute(_CREATE_UPDATE_LOG)
+        await self._db.execute(_CREATE_SUBSCRIPTIONS)
+        # Migrations for existing DBs
+        for ddl in (
+            "ALTER TABLE proxies ADD COLUMN source TEXT DEFAULT 'manual'",
+            "ALTER TABLE proxies ADD COLUMN subscription_id INTEGER",
+        ):
+            try:
+                await self._db.execute(ddl)
+            except Exception:
+                pass  # column already exists
         await self._db.commit()
 
     @property
@@ -247,8 +322,9 @@ class Storage:
         now = time.time()
         new_uris = {c.raw_uri for c in configs}
 
+        # Only manage manually-added proxies; leave subscription proxies untouched
         async with self._conn.execute(
-            "SELECT id, raw_uri FROM proxies WHERE status != 'dead'"
+            "SELECT id, raw_uri FROM proxies WHERE subscription_id IS NULL AND status != 'dead'"
         ) as cursor:
             existing = {r["raw_uri"]: r["id"] async for r in cursor}
 
@@ -264,8 +340,8 @@ class Storage:
                     """
                     INSERT INTO proxies
                         (raw_uri, uuid, host, port, name, security, type, flow,
-                         params_json, status, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+                         params_json, status, source, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)
                     ON CONFLICT(raw_uri) DO UPDATE SET
                         uuid        = excluded.uuid,
                         host        = excluded.host,
@@ -275,12 +351,14 @@ class Storage:
                         type        = excluded.type,
                         flow        = excluded.flow,
                         params_json = excluded.params_json,
+                        source      = excluded.source,
                         updated_at  = excluded.updated_at
+                    WHERE proxies.subscription_id IS NULL
                     """,
                     (
                         config.raw_uri, config.uuid, config.host, config.port,
                         config.name, config.security, config.type, config.flow,
-                        params_json, now, now,
+                        params_json, source, now, now,
                     ),
                 )
 
@@ -401,6 +479,234 @@ class Storage:
             pending=row["pending"] or 0,
             invalid=row["invalid"] or 0,
             running_processes=proc_row["cnt"] or 0,
+        )
+
+    async def get_pending_by_subscription(self, sub_id: int) -> ProxyRow | None:
+        async with self._conn.execute(
+            "SELECT * FROM proxies WHERE subscription_id = ? AND status = 'pending' LIMIT 1",
+            (sub_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+        return _row_to_proxy(row) if row else None
+
+    # ------------------------------------------------------------------
+    # Subscriptions
+    # ------------------------------------------------------------------
+
+    async def add_subscription(
+        self, url: str, name: str = "", fetch_interval: int = 3600
+    ) -> int:
+        now = time.time()
+        async with self._conn.execute(
+            """
+            INSERT INTO subscriptions (url, name, fetch_interval, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(url) DO UPDATE SET
+                name           = excluded.name,
+                fetch_interval = excluded.fetch_interval,
+                updated_at     = excluded.updated_at
+            RETURNING id
+            """,
+            (url, name, fetch_interval, now, now),
+        ) as cursor:
+            row = await cursor.fetchone()
+        await self._conn.commit()
+        return row["id"]
+
+    async def get_subscription(self, sub_id: int) -> SubscriptionRow | None:
+        async with self._conn.execute(
+            "SELECT * FROM subscriptions WHERE id = ?", (sub_id,)
+        ) as cursor:
+            row = await cursor.fetchone()
+        return _row_to_subscription(row) if row else None
+
+    async def get_subscription_by_url(self, url: str) -> SubscriptionRow | None:
+        async with self._conn.execute(
+            "SELECT * FROM subscriptions WHERE url = ?", (url,)
+        ) as cursor:
+            row = await cursor.fetchone()
+        return _row_to_subscription(row) if row else None
+
+    async def list_subscriptions(self) -> list[SubscriptionRow]:
+        async with self._conn.execute(
+            "SELECT * FROM subscriptions ORDER BY created_at"
+        ) as cursor:
+            return [_row_to_subscription(r) async for r in cursor]
+
+    async def delete_subscription(self, sub_id: int) -> None:
+        await self._conn.execute(
+            "DELETE FROM subscriptions WHERE id = ?", (sub_id,)
+        )
+        await self._conn.commit()
+
+    async def delete_subscription_proxies(self, sub_id: int) -> None:
+        now = time.time()
+        await self._conn.execute(
+            "UPDATE proxies SET status = 'dead', updated_at = ? WHERE subscription_id = ?",
+            (now, sub_id),
+        )
+        await self._conn.commit()
+
+    async def update_subscription_fetch(
+        self, sub_id: int, count: int, *, success: bool
+    ) -> None:
+        now = time.time()
+        if success:
+            await self._conn.execute(
+                """
+                UPDATE subscriptions
+                SET last_fetch = ?, last_fetch_count = ?, fail_count = 0, updated_at = ?
+                WHERE id = ?
+                """,
+                (now, count, now, sub_id),
+            )
+        else:
+            await self._conn.execute(
+                """
+                UPDATE subscriptions
+                SET fail_count = fail_count + 1, updated_at = ?
+                WHERE id = ?
+                """,
+                (now, sub_id),
+            )
+        await self._conn.commit()
+
+    async def replace_subscription_proxies(
+        self, sub_id: int, configs: list[VlessConfig]
+    ) -> UpdateStats:
+        now = time.time()
+        new_uris = {c.raw_uri for c in configs}
+        source = f"subscription:{sub_id}"
+
+        async with self._conn.execute(
+            "SELECT id, raw_uri FROM proxies WHERE subscription_id = ? AND status != 'dead'",
+            (sub_id,),
+        ) as cursor:
+            existing = {r["raw_uri"]: r["id"] async for r in cursor}
+
+        added = 0
+        removed = 0
+
+        try:
+            for config in configs:
+                if config.raw_uri not in existing:
+                    added += 1
+                params_json = json.dumps(asdict(config))
+                await self._conn.execute(
+                    """
+                    INSERT INTO proxies
+                        (raw_uri, uuid, host, port, name, security, type, flow,
+                         params_json, status, source, subscription_id, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)
+                    ON CONFLICT(raw_uri) DO UPDATE SET
+                        uuid            = excluded.uuid,
+                        host            = excluded.host,
+                        port            = excluded.port,
+                        name            = excluded.name,
+                        security        = excluded.security,
+                        type            = excluded.type,
+                        flow            = excluded.flow,
+                        params_json     = excluded.params_json,
+                        source          = excluded.source,
+                        subscription_id = excluded.subscription_id,
+                        updated_at      = excluded.updated_at
+                    """,
+                    (
+                        config.raw_uri, config.uuid, config.host, config.port,
+                        config.name, config.security, config.type, config.flow,
+                        params_json, source, sub_id, now, now,
+                    ),
+                )
+
+            for uri, proxy_id in existing.items():
+                if uri not in new_uris:
+                    removed += 1
+                    await self._conn.execute(
+                        "UPDATE proxies SET status = 'dead', updated_at = ? WHERE id = ?",
+                        (now, proxy_id),
+                    )
+
+            stats = UpdateStats(
+                total=len(configs),
+                valid=len(configs),
+                invalid=0,
+                added=added,
+                removed=removed,
+            )
+            await self._conn.execute(
+                """
+                INSERT INTO update_log (source, total, valid, invalid, added, removed, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (source, stats.total, stats.valid, stats.invalid,
+                 stats.added, stats.removed, now),
+            )
+            await self._conn.commit()
+        except Exception:
+            await self._conn.rollback()
+            raise
+
+        return stats
+
+    async def list_subscription_stats(self) -> list[SubscriptionStats]:
+        subs = await self.list_subscriptions()
+        result = []
+        for sub in subs:
+            async with self._conn.execute(
+                """
+                SELECT
+                    SUM(status = 'active')  AS active,
+                    SUM(status = 'dead')    AS dead,
+                    SUM(status = 'pending') AS pending,
+                    COUNT(*)                AS total
+                FROM proxies WHERE subscription_id = ?
+                """,
+                (sub.id,),
+            ) as cursor:
+                row = await cursor.fetchone()
+            result.append(
+                SubscriptionStats(
+                    id=sub.id,
+                    name=sub.name,
+                    url=sub.url,
+                    active=row["active"] or 0,
+                    pending=row["pending"] or 0,
+                    dead=row["dead"] or 0,
+                    total=row["total"] or 0,
+                    last_fetch=sub.last_fetch,
+                    fail_count=sub.fail_count,
+                    fetch_interval=sub.fetch_interval,
+                )
+            )
+        return result
+
+    async def get_subscription_stats(self, sub_id: int) -> SubscriptionStats | None:
+        sub = await self.get_subscription(sub_id)
+        if sub is None:
+            return None
+        async with self._conn.execute(
+            """
+            SELECT
+                SUM(status = 'active')  AS active,
+                SUM(status = 'dead')    AS dead,
+                SUM(status = 'pending') AS pending,
+                COUNT(*)                AS total
+            FROM proxies WHERE subscription_id = ?
+            """,
+            (sub_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+        return SubscriptionStats(
+            id=sub.id,
+            name=sub.name,
+            url=sub.url,
+            active=row["active"] or 0,
+            pending=row["pending"] or 0,
+            dead=row["dead"] or 0,
+            total=row["total"] or 0,
+            last_fetch=sub.last_fetch,
+            fail_count=sub.fail_count,
+            fetch_interval=sub.fetch_interval,
         )
 
     async def close(self) -> None:

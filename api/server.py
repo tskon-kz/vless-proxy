@@ -4,6 +4,7 @@ from pydantic import BaseModel
 
 from config import settings
 from core.manager import ProxyManager
+from core.storage import SubscriptionStats
 
 
 # ---------------------------------------------------------------------------
@@ -62,6 +63,54 @@ class UpdateResponse(BaseModel):
     newly_added: int
     removed: int
     errors: list[str]
+
+
+class SubscriptionRequest(BaseModel):
+    url: str
+    name: str = ""
+    fetch_interval: int = 3600
+
+
+class SubscriptionResponse(BaseModel):
+    id: int
+    url: str
+    name: str
+    fetch_interval: int
+    last_fetch: float | None
+    last_fetch_count: int
+    fail_count: int
+    active: int
+    pending: int
+    dead: int
+    total: int
+
+    @classmethod
+    def from_stats(cls, s: SubscriptionStats) -> "SubscriptionResponse":
+        return cls(
+            id=s.id,
+            url=s.url,
+            name=s.name,
+            fetch_interval=s.fetch_interval,
+            last_fetch=s.last_fetch,
+            last_fetch_count=0,
+            fail_count=s.fail_count,
+            active=s.active,
+            pending=s.pending,
+            dead=s.dead,
+            total=s.total,
+        )
+
+
+class SubscriptionListResponse(BaseModel):
+    count: int
+    subscriptions: list[SubscriptionResponse]
+
+
+class SubscriptionAddResponse(BaseModel):
+    id: int
+    url: str
+    name: str
+    fetched: int
 
 
 # ---------------------------------------------------------------------------
@@ -192,5 +241,70 @@ def create_api(manager: ProxyManager) -> FastAPI:
             removed=report.removed,
             errors=report.parse_errors,
         )
+
+    # ------------------------------------------------------------------
+    # Subscriptions (all require Bearer token)
+    # ------------------------------------------------------------------
+
+    def _require_sub_manager():
+        if manager.subscription_manager is None:
+            raise HTTPException(status_code=503, detail="subscription manager not available")
+        return manager.subscription_manager
+
+    @app.get(
+        "/subscriptions",
+        response_model=SubscriptionListResponse,
+        dependencies=[Depends(_bearer_auth)],
+    )
+    async def list_subscriptions():
+        sm = _require_sub_manager()
+        stats = await sm.list_subscriptions()
+        return SubscriptionListResponse(
+            count=len(stats),
+            subscriptions=[SubscriptionResponse.from_stats(s) for s in stats],
+        )
+
+    @app.post(
+        "/subscriptions",
+        response_model=SubscriptionAddResponse,
+        dependencies=[Depends(_bearer_auth)],
+    )
+    async def add_subscription(body: SubscriptionRequest):
+        sm = _require_sub_manager()
+        sub_id, result = await sm.add_subscription(
+            body.url, body.name, body.fetch_interval
+        )
+        if not result.success:
+            raise HTTPException(status_code=502, detail=f"fetch failed: {result.error}")
+        return SubscriptionAddResponse(
+            id=sub_id,
+            url=body.url,
+            name=body.name,
+            fetched=result.count,
+        )
+
+    @app.delete(
+        "/subscriptions/{sub_id}",
+        dependencies=[Depends(_bearer_auth)],
+    )
+    async def delete_subscription(sub_id: int):
+        _require_sub_manager()
+        sub = await manager.storage.get_subscription(sub_id)
+        if sub is None:
+            raise HTTPException(status_code=404, detail="subscription not found")
+        await manager.remove_subscription(sub_id)
+        return {"deleted": sub_id}
+
+    @app.post(
+        "/subscriptions/{sub_id}/refresh",
+        dependencies=[Depends(_bearer_auth)],
+    )
+    async def refresh_subscription(sub_id: int):
+        sm = _require_sub_manager()
+        sub = await manager.storage.get_subscription(sub_id)
+        if sub is None:
+            raise HTTPException(status_code=404, detail="subscription not found")
+        result = await sm.refresh_subscription(sub_id)
+        return {"url": result.url, "success": result.success, "count": result.count, "error": result.error}
 
     return app

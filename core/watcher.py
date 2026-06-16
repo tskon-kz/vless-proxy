@@ -44,26 +44,39 @@ class FileWatcher:
         logger.info("file changed: %s", self._file_path)
 
         try:
-            vless_links = [
+            lines = [
                 line.strip()
                 for line in content.splitlines()
-                if line.strip().startswith("vless://")
+                if line.strip() and not line.strip().startswith("#")
             ]
+            vless_links = [l for l in lines if l.startswith("vless://")]
+            sub_urls = [l for l in lines if l.startswith(("http://", "https://"))]
 
-            if not vless_links:
+            if not vless_links and not sub_urls:
                 logger.warning(
-                    "file %s contains no vless:// links, skipping", self._file_path
+                    "file %s contains no vless:// links or subscription URLs, skipping",
+                    self._file_path,
                 )
                 return
 
-            report = await self._manager.update_proxies(vless_links, source="file")
-            logger.info(
-                "file update done: %d valid, %d invalid, %d added, %d removed",
-                report.valid,
-                report.invalid,
-                report.newly_added,
-                report.removed,
-            )
+            if vless_links:
+                report = await self._manager.update_proxies(vless_links, source="file")
+                logger.info(
+                    "file update done: %d valid, %d invalid, %d added, %d removed",
+                    report.valid,
+                    report.invalid,
+                    report.newly_added,
+                    report.removed,
+                )
+
+            if sub_urls and self._manager.subscription_manager:
+                for url in sub_urls:
+                    result = await self._manager.subscription_manager.add_or_refresh(url)
+                    if result.success:
+                        logger.info("subscription %s: %d links", url, result.count)
+                    else:
+                        logger.warning("subscription %s failed: %s", url, result.error)
+
             self._file_path.unlink()
             self._last_hash = None
             logger.info("deleted %s after import", self._file_path)
@@ -77,18 +90,26 @@ class FileWatcher:
 
         content = self._file_path.read_text(encoding="utf-8", errors="replace")
         if not content.strip():
-            return False  # empty file — wait for content
-
-        links = [
-            line.strip()
-            for line in content.splitlines()
-            if line.strip().startswith("vless://")
-        ]
-
-        if not links:
             return False
 
-        await self._manager.update_proxies(links, source="file")
+        lines = [
+            line.strip()
+            for line in content.splitlines()
+            if line.strip() and not line.strip().startswith("#")
+        ]
+        vless_links = [l for l in lines if l.startswith("vless://")]
+        sub_urls = [l for l in lines if l.startswith(("http://", "https://"))]
+
+        if not vless_links and not sub_urls:
+            return False
+
+        if vless_links:
+            await self._manager.update_proxies(vless_links, source="file")
+
+        if sub_urls and self._manager.subscription_manager:
+            for url in sub_urls:
+                await self._manager.subscription_manager.add_or_refresh(url)
+
         self._file_path.unlink()
         logger.info("loaded and deleted %s", self._file_path)
         return True
