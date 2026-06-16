@@ -2,6 +2,7 @@ import logging
 from typing import Any, Awaitable, Callable
 
 from aiogram import Bot, Dispatcher, F, Router
+from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.filters import Command
 from aiogram.types import Message
 
@@ -210,7 +211,8 @@ async def handle_document(message: Message, bot: Bot, manager: ProxyManager) -> 
 # ---------------------------------------------------------------------------
 
 def create_bot(manager: ProxyManager) -> tuple[Bot, Dispatcher]:
-    bot = Bot(token=settings.TG_BOT_TOKEN)
+    session = AiohttpSession(proxy=settings.TG_BOT_PROXY) if settings.TG_BOT_PROXY else None
+    bot = Bot(token=settings.TG_BOT_TOKEN, session=session)
     dp = Dispatcher()
     dp.message.middleware(AccessMiddleware())
     dp.include_router(router)

@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     TG_BOT_TOKEN: str
     TG_ALLOWED_USER_IDS: List[int] = []
     TG_NOTIFY_CHAT_ID: int | None = None
+    # Proxy for Telegram API requests (e.g. socks5://127.0.0.1:10800)
+    TG_BOT_PROXY: str | None = None
 
     # xray
     XRAY_BINARY: str = "/usr/local/bin/xray"

@@ -12,6 +12,8 @@ await dp.start_polling(bot, allowed_updates=["message"])
 
 `create_bot` returns `(Bot, Dispatcher)`. The `manager` is injected into handlers via `dp["manager"] = manager`.
 
+When `TG_BOT_PROXY` is set, `Bot` is created with `AiohttpSession(proxy=...)` — all Telegram API requests go through the specified proxy (SOCKS5/HTTP). Needed when the server cannot reach Telegram directly.
+
 ## Access control
 
 All messages pass through `AccessMiddleware`. The bot silently ignores messages from users not in `TG_ALLOWED_USER_IDS` — no errors, no replies.

@@ -22,10 +22,19 @@ print(settings.TG_BOT_TOKEN)   # "123456:ABC..."
 | `TG_BOT_TOKEN` | `str` | ✓ | — |
 | `TG_ALLOWED_USER_IDS` | `list[int]` | — | `[]` |
 | `TG_NOTIFY_CHAT_ID` | `int \| None` | — | `None` |
+| `TG_BOT_PROXY` | `str \| None` | — | `None` |
 
 `TG_ALLOWED_USER_IDS` accepts a comma-separated string: `123,456,789`.
 
 `TG_NOTIFY_CHAT_ID` — when set, the bot sends a message to this chat whenever a proxy changes status (alive / dead).
+
+`TG_BOT_PROXY` — proxy for outgoing Telegram API requests. Use this on servers where Telegram is blocked. Supported schemes: `socks5://`, `socks4://`, `http://`. Typically points to one of the SOCKS5 ports in your own proxy pool:
+
+```
+TG_BOT_PROXY=socks5://127.0.0.1:10800
+```
+
+Requires the `aiohttp-socks` dependency. When not set, behaviour is unchanged.
 
 ### xray-core
 

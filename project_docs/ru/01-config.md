@@ -22,10 +22,19 @@ print(settings.TG_BOT_TOKEN)   # "123456:ABC..."
 | `TG_BOT_TOKEN` | `str` | ✓ | — |
 | `TG_ALLOWED_USER_IDS` | `list[int]` | — | `[]` |
 | `TG_NOTIFY_CHAT_ID` | `int \| None` | — | `None` |
+| `TG_BOT_PROXY` | `str \| None` | — | `None` |
 
 `TG_ALLOWED_USER_IDS` принимает строку через запятую: `123,456,789`.
 
 `TG_NOTIFY_CHAT_ID` — если указан, бот будет отправлять в этот чат сообщения при смене статуса прокси (`alive` / `dead`).
+
+`TG_BOT_PROXY` — прокси для исходящих запросов бота к Telegram API. Используется на серверах, где Telegram заблокирован. Поддерживаемые схемы: `socks5://`, `socks4://`, `http://`. Обычно указывается один из SOCKS5-портов собственного пула:
+
+```
+TG_BOT_PROXY=socks5://127.0.0.1:10800
+```
+
+Требует зависимости `aiohttp-socks`. Если не задан — поведение не меняется.
 
 ### xray-core
 
