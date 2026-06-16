@@ -10,33 +10,35 @@
 
 ```
 main.py
-├── ProxyManager          — центральный оркестратор
-│   ├── Storage           — SQLite база данных
-│   ├── XrayProcessPool   — пул xray-процессов
-│   └── HealthChecker     — проверка живости
-├── FileWatcher           — наблюдает за vless.txt
-├── FastAPI (uvicorn)     — REST API
-└── Bot + Dispatcher      — Telegram-бот (aiogram 3)
+├── ProxyManager              — центральный оркестратор
+│   ├── Storage               — SQLite база данных
+│   ├── XrayProcessPool       — пул xray-процессов
+│   ├── HealthChecker         — проверка живости
+│   └── SubscriptionManager   — задачи поллинга подписок
+├── FileWatcher               — наблюдает за vless.txt
+├── FastAPI (uvicorn)         — REST API
+└── Bot + Dispatcher          — Telegram-бот (aiogram 3)
 ```
 
 ## Жизненный цикл прокси
 
 ```
-Входящие ссылки (бот / файл / API)
+Входящие ссылки (бот / файл / API / подписка)
           │
           ▼
     parse_vless()              парсинг и валидация URI
           │
           ▼
   storage.replace_all()        сохранение в БД, статус → pending
+  (или replace_subscription_proxies для подписок)
           │
           ▼
     HealthChecker              TCP-пинг + HTTP через временный xray
           │
      ┌────┴────┐
    жив        мёртв
-     │
-     ▼
+     │          └──► если прокси подписки: проверить следующий
+     ▼               pending из той же подписки
 XrayProcessPool                запуск постоянного xray-процесса
      │
      ▼
@@ -66,7 +68,23 @@ socks5://127.0.0.1:<port>      доступно клиентам через API
 |---|---|
 | pydantic-settings | Конфигурация через env/`.env` |
 | aiosqlite | Асинхронный SQLite |
-| aiohttp | HTTP-клиент в health-checker |
+| aiohttp | HTTP-клиент в health-checker и fetcher подписок |
 | FastAPI + uvicorn | REST API |
 | aiogram 3 | Telegram-бот |
 | xray-core | Внешний Go-бинарник; туннелирует трафик |
+
+## Индекс модулей
+
+| Файл | Документация |
+|---|---|
+| `config.py` | [Конфигурация](01-config.md) |
+| `core/parser.py` | [Парсер VLESS ссылок](02-parser.md) |
+| `core/storage.py` | [Хранилище (SQLite)](03-storage.md) |
+| `core/xray.py` | [Управление xray-core](04-xray.md) |
+| `core/health.py` | [Проверка живости](05-health.md) |
+| `core/manager.py` | [Оркестратор](06-manager.md) |
+| `api/server.py` | [REST API](07-api.md) |
+| `bot/bot.py` | [Telegram-бот](08-bot.md) |
+| `core/watcher.py` | [Файловый вотчер](09-watcher.md) |
+| systemd | [Деплой](10-systemd.md) |
+| `core/subscription.py` | [Подписки](11-subscription.md) |

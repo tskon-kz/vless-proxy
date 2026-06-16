@@ -70,7 +70,9 @@ journalctl -u vless-manager -f
 
 **Via Telegram bot** — send `vless://` links as text or attach a `.txt` file.
 
-**Via file** — create `vless.txt` with links (one per line, `#` for comments). The service loads the file on startup and deletes it. Dropping a file while running — picked up within `FILE_CHECK_INTERVAL` seconds.
+**Via subscription** — `/sub_add https://sub.example.com/token [name]`. The service fetches the URL immediately and then polls it every `SUBSCRIPTION_FETCH_INTERVAL` seconds (default 1 hour). Subscription proxies are isolated from manual updates.
+
+**Via file** — create `vless.txt` with links (one per line, `#` for comments). HTTP/HTTPS lines are treated as subscription URLs. The service loads the file on startup and deletes it. Dropping a file while running — picked up within `FILE_CHECK_INTERVAL` seconds.
 
 **Via REST API:**
 ```bash
@@ -90,6 +92,10 @@ curl -X POST http://127.0.0.1:8888/update \
 | GET | `/proxy/random` | — | Random active proxy |
 | GET | `/proxy/best` | — | Lowest-latency proxy |
 | POST | `/update` | Bearer | Submit new VLESS links |
+| GET | `/subscriptions` | Bearer | List subscriptions with proxy counts |
+| POST | `/subscriptions` | Bearer | Add subscription |
+| DELETE | `/subscriptions/{id}` | Bearer | Remove subscription and its proxies |
+| POST | `/subscriptions/{id}/refresh` | Bearer | Trigger immediate refresh |
 
 Using a proxy from the API response:
 ```python
@@ -129,3 +135,4 @@ Setting `PROXY_BIND_HOST` to the real IP is important: the API embeds it into `p
 - [Telegram bot](project_docs/en/08-bot.md)
 - [File watcher](project_docs/en/09-watcher.md)
 - [Deployment (systemd)](project_docs/en/10-systemd.md)
+- [Subscriptions](project_docs/en/11-subscription.md)
