@@ -158,7 +158,7 @@ def validate_config(config: VlessConfig) -> list[str]:
 
 
 def parse_vless_list(text: str) -> tuple[list[VlessConfig], list[ParseResult]]:
-    seen: set[tuple[str, int]] = set()
+    seen: set[str] = set()
     configs: list[VlessConfig] = []
     results: list[ParseResult] = []
 
@@ -171,9 +171,8 @@ def parse_vless_list(text: str) -> tuple[list[VlessConfig], list[ParseResult]]:
         results.append(result)
 
         if result.success and result.config is not None:
-            key = (result.config.host, result.config.port)
-            if key not in seen:
-                seen.add(key)
+            if result.config.raw_uri not in seen:
+                seen.add(result.config.raw_uri)
                 configs.append(result.config)
 
     return configs, results
