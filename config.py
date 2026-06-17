@@ -19,7 +19,6 @@ class Settings(BaseSettings):
     TG_BOT_TOKEN: str
     TG_ALLOWED_USER_IDS: List[int] = []
     TG_NOTIFY_CHAT_ID: int | None = None
-    # Proxy for Telegram API requests (e.g. socks5://127.0.0.1:10800)
     TG_BOT_PROXY: str | None = None
 
     # xray
@@ -40,19 +39,14 @@ class Settings(BaseSettings):
     # REST API
     API_HOST: str = "127.0.0.1"
     API_PORT: int = 8888
-    API_SECRET_KEY: str = ""  # required for POST /update; endpoint disabled if empty
 
     # Storage
     DB_PATH: str = "./state.db"
 
-    # File watcher
-    VLESS_FILE: str = "./vless.txt"
-    FILE_CHECK_INTERVAL: int = 30
-
-    # Subscriptions
-    SUBSCRIPTION_FETCH_INTERVAL: int = 3600
+    # Subscriptions — JSON array in .env: SUBSCRIPTION_URLS=["https://...","https://..."]
+    SUBSCRIPTION_URLS: List[str] = []
+    SUBSCRIPTION_FETCH_INTERVAL: int = 1800  # 30 minutes
     SUBSCRIPTION_TIMEOUT: int = 30
-    SUBSCRIPTION_MAX_RETRIES: int = 3
 
     def validate(self) -> None:
         if not self.TG_BOT_TOKEN:
@@ -66,11 +60,9 @@ class Settings(BaseSettings):
 
         if self.PROXY_PORT_START >= self.PROXY_PORT_END:
             raise ValueError(
-                f"PROXY_PORT_START ({self.PROXY_PORT_START}) must be less than PROXY_PORT_END ({self.PROXY_PORT_END})"
+                f"PROXY_PORT_START ({self.PROXY_PORT_START}) must be less than "
+                f"PROXY_PORT_END ({self.PROXY_PORT_END})"
             )
-
-        if self.PROXY_PORT_END - self.PROXY_PORT_START < 1:
-            raise ValueError("Proxy pool must contain at least 2 ports")
 
 
 settings = Settings()

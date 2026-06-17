@@ -9,7 +9,6 @@ from bot.bot import create_bot
 from config import settings
 from core.manager import ProxyManager
 from core.storage import Storage
-from core.watcher import FileWatcher
 
 logging.basicConfig(
     level=logging.INFO,
@@ -27,10 +26,6 @@ async def run() -> None:
     bot, dp = create_bot(manager)
     api_app = create_api(manager)
 
-    watcher = FileWatcher(manager)
-    await watcher.load_once()
-    asyncio.create_task(watcher.run_forever())
-
     uvicorn_config = uvicorn.Config(
         api_app,
         host=settings.API_HOST,
@@ -40,9 +35,7 @@ async def run() -> None:
     server = uvicorn.Server(uvicorn_config)
     server.install_signal_handlers = lambda: None
 
-    logger.info(
-        "API listening on http://%s:%d", settings.API_HOST, settings.API_PORT
-    )
+    logger.info("API listening on http://%s:%d", settings.API_HOST, settings.API_PORT)
 
     shutdown = asyncio.Event()
     loop = asyncio.get_running_loop()
