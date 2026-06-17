@@ -86,37 +86,38 @@ class ProxyManager:
         await self._reorder_by_latency()
 
     async def _reorder_by_latency(self) -> None:
-        active = await self.storage.get_active_proxies()
-        if not active:
-            return
+        async with self._lock:
+            active = await self.storage.get_active_proxies()
+            if not active:
+                return
 
-        sorted_proxies = sorted(
-            active,
-            key=lambda p: (p.latency_ms is None, p.latency_ms or 0),
-        )
-        ports = list(range(settings.PROXY_PORT_START, settings.PROXY_PORT_END + 1))
-        desired = {proxy.id: ports[i] for i, proxy in enumerate(sorted_proxies) if i < len(ports)}
+            sorted_proxies = sorted(
+                active,
+                key=lambda p: (p.latency_ms is None, p.latency_ms or 0),
+            )
+            ports = list(range(settings.PROXY_PORT_START, settings.PROXY_PORT_END + 1))
+            desired = {proxy.id: ports[i] for i, proxy in enumerate(sorted_proxies) if i < len(ports)}
 
-        moves: list[tuple[ProxyRow, int]] = []
-        for proxy in sorted_proxies:
-            new_port = desired.get(proxy.id)
-            if new_port is None:
-                continue
-            proc = self.process_pool.get_process(proxy.id)
-            current_port = proc.local_port if proc else None
-            if current_port != new_port:
-                moves.append((proxy, new_port))
+            moves: list[tuple[ProxyRow, int]] = []
+            for proxy in sorted_proxies:
+                new_port = desired.get(proxy.id)
+                if new_port is None:
+                    continue
+                proc = self.process_pool.get_process(proxy.id)
+                current_port = proc.local_port if proc else None
+                if current_port != new_port:
+                    moves.append((proxy, new_port))
 
-        if not moves:
-            return
+            if not moves:
+                return
 
-        logger.info("reordering %d proxies by latency", len(moves))
-        for proxy, _ in moves:
-            if self.process_pool.get_process(proxy.id) is not None:
-                await self.process_pool.stop_proxy(proxy.id)
-        for proxy, new_port in moves:
-            config = vless_config_from_proxy(proxy)
-            await self.process_pool.start_proxy(proxy.id, config, port=new_port)
+            logger.info("reordering %d proxies by latency", len(moves))
+            for proxy, _ in moves:
+                if self.process_pool.get_process(proxy.id) is not None:
+                    await self.process_pool.stop_proxy(proxy.id)
+            for proxy, new_port in moves:
+                config = vless_config_from_proxy(proxy)
+                await self.process_pool.start_proxy(proxy.id, config, port=new_port)
 
     def _status_change_callback(self, result: HealthResult) -> None:
         asyncio.create_task(self._on_health_change(result))
@@ -126,13 +127,14 @@ class ProxyManager:
         if proxy is None:
             return
 
-        if result.success:
-            if self.process_pool.get_process(result.proxy_id) is None:
-                config = vless_config_from_proxy(proxy)
-                await self.process_pool.start_proxy(result.proxy_id, config)
-        else:
-            if self.process_pool.get_process(result.proxy_id) is not None:
-                await self.process_pool.stop_proxy(result.proxy_id)
+        async with self._lock:
+            if result.success:
+                if self.process_pool.get_process(result.proxy_id) is None:
+                    config = vless_config_from_proxy(proxy)
+                    await self.process_pool.start_proxy(result.proxy_id, config)
+            else:
+                if self.process_pool.get_process(result.proxy_id) is not None:
+                    await self.process_pool.stop_proxy(result.proxy_id)
 
         prev_success = self._last_notified.get(result.proxy_id)
         status_changed = prev_success is not None and prev_success != result.success

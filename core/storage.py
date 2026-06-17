@@ -423,12 +423,12 @@ class Storage:
 
     async def replace_subscription_proxies(
         self, sub_id: int, configs: list[VlessConfig]
-    ) -> None:
+    ) -> list[int]:
         now = time.time()
         new_uris = {c.raw_uri for c in configs}
 
         async with self._conn.execute(
-            "SELECT id, raw_uri FROM proxies WHERE subscription_id = ? AND status != 'dead'",
+            "SELECT id, raw_uri FROM proxies WHERE subscription_id = ?",
             (sub_id,),
         ) as cursor:
             existing = {r["raw_uri"]: r["id"] async for r in cursor}
@@ -462,14 +462,17 @@ class Storage:
                     ),
                 )
 
+            removed_ids = []
             for uri, proxy_id in existing.items():
                 if uri not in new_uris:
+                    removed_ids.append(proxy_id)
                     await self._conn.execute(
-                        "UPDATE proxies SET status = 'dead', updated_at = ? WHERE id = ?",
-                        (now, proxy_id),
+                        "DELETE FROM proxies WHERE id = ?",
+                        (proxy_id,),
                     )
 
             await self._conn.commit()
+            return removed_ids
         except Exception:
             await self._conn.rollback()
             raise

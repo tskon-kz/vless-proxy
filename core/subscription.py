@@ -128,18 +128,20 @@ class SubscriptionManager:
             await self._storage.update_subscription_fetch(sub_id, 0, success=True)
             return FetchResult(url=sub.url, success=True, count=0)
 
-        await self._storage.replace_subscription_proxies(sub_id, valid_configs)
+        removed_ids = await self._storage.replace_subscription_proxies(sub_id, valid_configs)
         await self._storage.update_subscription_fetch(sub_id, len(valid_configs), success=True)
-        logger.info("subscription %d refreshed: %d proxies", sub_id, len(valid_configs))
+        logger.info(
+            "subscription %d refreshed: %d proxies, %d removed",
+            sub_id, len(valid_configs), len(removed_ids),
+        )
+
+        for proxy_id in removed_ids:
+            if self._proxy_manager.process_pool.get_process(proxy_id) is not None:
+                await self._proxy_manager.process_pool.stop_proxy(proxy_id)
 
         self._proxy_manager._create_task(
             self._proxy_manager._check_pending_and_reorder()
         )
-
-        for proxy in await self._storage.get_all_proxies():
-            if proxy.subscription_id == sub_id and proxy.status == "dead":
-                if self._proxy_manager.process_pool.get_process(proxy.id) is not None:
-                    await self._proxy_manager.process_pool.stop_proxy(proxy.id)
 
         return FetchResult(url=sub.url, success=True, count=len(valid_configs))
 
