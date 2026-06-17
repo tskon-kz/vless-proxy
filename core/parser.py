@@ -1,7 +1,7 @@
 import ipaddress
 import uuid as uuid_module
 from dataclasses import dataclass, field
-from urllib.parse import parse_qs, unquote, urlparse, urlunparse
+from urllib.parse import parse_qs, parse_qsl, unquote, urlencode, urlparse, urlunparse
 
 
 @dataclass
@@ -73,8 +73,10 @@ def parse_vless(uri: str) -> ParseResult:
         name = unquote(parsed.fragment) if parsed.fragment else ""
         params = parse_qs(parsed.query, keep_blank_values=True)
 
-        # Strip fragment so that server renames don't create new DB entries
-        raw_uri = urlunparse(parsed._replace(fragment=""))
+        # Strip fragment and sort query params so that different param orderings
+        # from the same subscription server don't create duplicate DB entries.
+        sorted_query = urlencode(sorted(parse_qsl(parsed.query, keep_blank_values=True)))
+        raw_uri = urlunparse(parsed._replace(query=sorted_query, fragment=""))
 
         config = VlessConfig(
             uuid=raw_uuid,

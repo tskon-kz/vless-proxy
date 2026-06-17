@@ -55,36 +55,6 @@ class ProxyManager:
         self._started_at = time.time()
 
         self.subscription_manager = SubscriptionManager(self.storage, self)
-
-        all_known = await self.storage.get_all_proxies()
-        for proxy in all_known:
-            if proxy.status == "active":
-                self._last_notified[proxy.id] = True
-            elif proxy.status == "dead":
-                self._last_notified[proxy.id] = False
-
-        active = sorted(
-            [p for p in all_known if p.status == "active"],
-            key=lambda p: (p.latency_ms is None, p.latency_ms or 0),
-        )
-        restored = 0
-        for proxy in active:
-            config = vless_config_from_proxy(proxy)
-            proc = await self.process_pool.start_proxy(proxy.id, config)
-            if proc is not None:
-                restored += 1
-
-        logger.info("startup: restored %d/%d active proxies", restored, len(active))
-
-        pending = await self.storage.get_pending_proxies()
-        if pending:
-            logger.info("startup: checking %d pending proxies", len(pending))
-            self._create_task(
-                self.health_checker.check_pending(
-                    on_status_change=self._status_change_callback
-                )
-            )
-
         await self.subscription_manager.startup()
 
         self._health_task = asyncio.create_task(self._health_loop())
@@ -165,7 +135,7 @@ class ProxyManager:
                 await self.process_pool.stop_proxy(result.proxy_id)
 
         prev_success = self._last_notified.get(result.proxy_id)
-        status_changed = prev_success is None or prev_success != result.success
+        status_changed = prev_success is not None and prev_success != result.success
         self._last_notified[result.proxy_id] = result.success
 
         if status_changed and self.notify_callback and settings.TG_NOTIFY_CHAT_ID:

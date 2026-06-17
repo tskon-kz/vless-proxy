@@ -43,8 +43,8 @@ def status_message(
 
 def proxy_alive(name: str, host: str, port: int, latency_ms: int | None) -> str:
     latency = f"{latency_ms}ms" if latency_ms is not None else "—"
-    return f"✅ Прокси ожил: {name or host} ({host}:{port})\nЗадержка: {latency}"
+    return f"✅ Прокси онлайн: {name or host} ({host}:{port})\nЗадержка: {latency}"
 
 
 def proxy_dead(name: str, host: str, port: int, fail_count: int) -> str:
-    return f"💀 Прокси умер: {name or host} ({host}:{port})\nОшибок подряд: {fail_count}"
+    return f"💀 Прокси мертв: {name or host} ({host}:{port})\nОшибок подряд: {fail_count}"

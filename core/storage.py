@@ -164,14 +164,7 @@ class Storage:
         await self._db.execute(_CREATE_PROCESSES)
         await self._db.execute(_CREATE_SUBSCRIPTIONS)
 
-        # Reset stale process states from any previous unclean shutdown
-        await self._db.execute("UPDATE processes SET status = 'stopped', pid = NULL")
-        await self._db.execute(
-            "DELETE FROM processes WHERE rowid NOT IN "
-            "(SELECT MAX(rowid) FROM processes GROUP BY proxy_id)"
-        )
-
-        # Migrations for existing DBs
+        # Schema migrations for existing DBs
         for ddl in (
             "ALTER TABLE proxies ADD COLUMN subscription_id INTEGER",
         ):
@@ -180,25 +173,10 @@ class Storage:
             except Exception:
                 pass
 
-        # Strip URI fragments (display names) from raw_uri
-        async with self._db.execute(
-            "SELECT id, raw_uri FROM proxies WHERE raw_uri LIKE '%#%'"
-        ) as cursor:
-            rows = await cursor.fetchall()
-        for row in rows:
-            canonical = row["raw_uri"].split("#")[0]
-            async with self._db.execute(
-                "SELECT id FROM proxies WHERE raw_uri = ? AND id != ?",
-                (canonical, row["id"]),
-            ) as dup_cursor:
-                dup = await dup_cursor.fetchone()
-            if dup:
-                await self._db.execute("DELETE FROM proxies WHERE id = ?", (row["id"],))
-            else:
-                await self._db.execute(
-                    "UPDATE proxies SET raw_uri = ? WHERE id = ?",
-                    (canonical, row["id"]),
-                )
+        # Wipe proxy state on every restart so stale data never accumulates.
+        # Subscription pollers re-fetch immediately because last_fetch is reset.
+        await self._db.execute("DELETE FROM proxies")
+        await self._db.execute("UPDATE subscriptions SET last_fetch = NULL")
 
         await self._db.commit()
 

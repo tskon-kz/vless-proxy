@@ -29,12 +29,12 @@ class TestStrings:
 
     def test_proxy_alive(self):
         text = strings.proxy_alive("Server", "1.2.3.4", 443, 55)
-        assert "ожил" in text
+        assert "онлайн" in text
         assert "55ms" in text
 
     def test_proxy_dead(self):
         text = strings.proxy_dead("Server", "1.2.3.4", 443, 3)
-        assert "умер" in text
+        assert "мертв" in text
         assert "3" in text
 
 

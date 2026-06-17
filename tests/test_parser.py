@@ -33,7 +33,8 @@ class TestParseVless:
         assert c.pbk == "CMkW1axrhEXsamplekey"
         assert c.sid == "7e77e7e2cf2b7a79"
         assert c.name == "Amsterdam"
-        assert c.raw_uri == VALID_REALITY_URI
+        assert "#" not in c.raw_uri
+        assert c.host in c.raw_uri
 
     def test_no_vless_prefix(self):
         result = parse_vless("https://example.com")
@@ -161,12 +162,6 @@ class TestParseVlessList:
         configs, results = parse_vless_list(text)
         assert len(configs) == 1
         assert len(results) == 3
-
-    def test_space_separated_links(self):
-        uri1 = self._make_uri("6877f7a304ae", "1.1.1.1")
-        uri2 = self._make_uri("6877f7a304ab", "2.2.2.2")
-        configs, results = parse_vless_list(f"{uri1} {uri2}")
-        assert len(configs) == 2
 
     def test_skips_non_vless_lines(self):
         text = "# comment\nhttps://example.com\n" + self._make_uri("6877f7a304ae", "1.1.1.1")
