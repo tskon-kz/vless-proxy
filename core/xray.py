@@ -239,9 +239,10 @@ class XrayProcessPool:
         self._processes: dict[int, XrayProcess] = {}
 
     async def start_proxy(
-        self, proxy_id: int, config: VlessConfig
+        self, proxy_id: int, config: VlessConfig, port: int | None = None
     ) -> XrayProcess | None:
-        port = await self._storage.get_available_port()
+        if port is None:
+            port = await self._storage.get_available_port()
         if port is None:
             logger.warning("no available port in pool for proxy_id=%d", proxy_id)
             return None

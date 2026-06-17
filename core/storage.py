@@ -359,6 +359,7 @@ class Storage:
                         flow        = excluded.flow,
                         params_json = excluded.params_json,
                         source      = excluded.source,
+                        status      = CASE WHEN proxies.status = 'dead' THEN 'pending' ELSE proxies.status END,
                         updated_at  = excluded.updated_at
                     WHERE proxies.subscription_id IS NULL
                     """,
@@ -620,6 +621,7 @@ class Storage:
                         params_json     = excluded.params_json,
                         source          = excluded.source,
                         subscription_id = excluded.subscription_id,
+                        status          = CASE WHEN proxies.status = 'dead' THEN 'pending' ELSE proxies.status END,
                         updated_at      = excluded.updated_at
                     """,
                     (

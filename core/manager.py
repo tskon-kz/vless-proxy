@@ -78,7 +78,10 @@ class ProxyManager:
             elif proxy.status == "dead":
                 self._last_notified[proxy.id] = False
 
-        active = [p for p in all_known if p.status == "active"]
+        active = sorted(
+            [p for p in all_known if p.status == "active"],
+            key=lambda p: (p.latency_ms is None, p.latency_ms or 0),
+        )
         restored = 0
         for proxy in active:
             config = vless_config_from_proxy(proxy)
@@ -146,14 +149,10 @@ class ProxyManager:
                 if self.process_pool.get_process(proxy_id) is not None:
                     await self.process_pool.stop_proxy(proxy_id)
 
-            # Kick off health checks for pending proxies in the background
+            # Kick off health checks for pending proxies, then reorder by latency
             pending = await self.storage.get_pending_proxies()
             if pending:
-                self._create_task(
-                    self.health_checker.check_pending(
-                        on_status_change=self._status_change_callback
-                    )
-                )
+                self._create_task(self._check_pending_and_reorder())
 
             return UpdateReport(
                 total_received=total_received,
@@ -165,6 +164,45 @@ class ProxyManager:
                 removed=stats.removed,
                 source=source,
             )
+
+    async def _check_pending_and_reorder(self) -> None:
+        await self.health_checker.check_pending(
+            on_status_change=self._status_change_callback
+        )
+        await self._reorder_by_latency()
+
+    async def _reorder_by_latency(self) -> None:
+        active = await self.storage.get_active_proxies()
+        if not active:
+            return
+
+        sorted_proxies = sorted(
+            active,
+            key=lambda p: (p.latency_ms is None, p.latency_ms or 0),
+        )
+        ports = list(range(settings.PROXY_PORT_START, settings.PROXY_PORT_END + 1))
+        desired = {proxy.id: ports[i] for i, proxy in enumerate(sorted_proxies) if i < len(ports)}
+
+        moves: list[tuple[ProxyRow, int]] = []
+        for proxy in sorted_proxies:
+            new_port = desired.get(proxy.id)
+            if new_port is None:
+                continue
+            proc = self.process_pool.get_process(proxy.id)
+            current_port = proc.local_port if proc else None
+            if current_port != new_port:
+                moves.append((proxy, new_port))
+
+        if not moves:
+            return
+
+        logger.info("reordering %d proxies by latency", len(moves))
+        for proxy, _ in moves:
+            if self.process_pool.get_process(proxy.id) is not None:
+                await self.process_pool.stop_proxy(proxy.id)
+        for proxy, new_port in moves:
+            config = vless_config_from_proxy(proxy)
+            await self.process_pool.start_proxy(proxy.id, config, port=new_port)
 
     def _status_change_callback(self, result: HealthResult) -> None:
         asyncio.create_task(self._on_health_change(result))
@@ -244,6 +282,8 @@ class ProxyManager:
                     last_check=proxy.last_check,
                 )
             )
+
+        proxy_infos.sort(key=lambda p: p.local_port)
 
         return ManagerStatus(
             pool_stats=pool_stats,
