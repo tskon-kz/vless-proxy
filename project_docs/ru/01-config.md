@@ -2,92 +2,46 @@
 
 [English](../en/01-config.md)
 
-## Как работает
+Все настройки читаются из `.env` через pydantic-settings. Файл подхватывается автоматически.
 
-Все настройки — одна pydantic-модель `Settings(BaseSettings)`. При импорте модуля создаётся глобальный объект `settings = Settings()`, который читает значения из переменных окружения и файла `.env` (если он есть).
+## Обязательные настройки
 
-```python
-from config import settings
+| Переменная | Описание |
+|---|---|
+| `TG_BOT_TOKEN` | Токен бота от @BotFather |
+| `TG_ALLOWED_USER_IDS` | JSON-массив Telegram user ID |
+| `SUBSCRIPTION_URLS` | JSON-массив URL подписок |
 
-print(settings.API_PORT)       # 8888
-print(settings.TG_BOT_TOKEN)   # "123456:ABC..."
+`TG_ALLOWED_USER_IDS` и `SUBSCRIPTION_URLS` должны быть валидными JSON-массивами:
+```env
+TG_ALLOWED_USER_IDS=[221061944]
+SUBSCRIPTION_URLS=["https://sub.example.com/token"]
 ```
 
-## Переменные
+## Все настройки
 
-### Telegram
-
-| Поле | Тип | Обязательное | По умолчанию |
-|------|-----|:---:|---|
-| `TG_BOT_TOKEN` | `str` | ✓ | — |
-| `TG_ALLOWED_USER_IDS` | `list[int]` | — | `[]` |
-| `TG_NOTIFY_CHAT_ID` | `int \| None` | — | `None` |
-| `TG_BOT_PROXY` | `str \| None` | — | `None` |
-
-`TG_ALLOWED_USER_IDS` принимает строку через запятую: `123,456,789`.
-
-`TG_NOTIFY_CHAT_ID` — если указан, бот будет отправлять в этот чат сообщения при смене статуса прокси (`alive` / `dead`).
-
-`TG_BOT_PROXY` — прокси для исходящих запросов бота к Telegram API. Используется на серверах, где Telegram заблокирован. Поддерживаемые схемы: `socks5://`, `socks4://`, `http://`. Обычно указывается один из SOCKS5-портов собственного пула:
-
-```
-TG_BOT_PROXY=socks5://127.0.0.1:10800
-```
-
-Требует зависимости `aiohttp-socks`. Если не задан — поведение не меняется.
-
-### xray-core
-
-| Поле | По умолчанию | Описание |
-|------|---|---|
-| `XRAY_BINARY` | `/usr/local/bin/xray` | Путь к бинарнику |
-| `XRAY_CONFIG_DIR` | `/tmp/vless-manager` | Директория для временных JSON-конфигов |
-
-### Пул прокси
-
-| Поле | По умолчанию | Описание |
-|------|---|---|
-| `PROXY_PORT_START` | `10800` | Первый порт диапазона SOCKS5 |
-| `PROXY_PORT_END` | `10820` | Последний порт диапазона SOCKS5 |
+| Переменная | По умолчанию | Описание |
+|---|---|---|
+| `TG_BOT_TOKEN` | — | Токен Telegram-бота |
+| `TG_ALLOWED_USER_IDS` | `[]` | Разрешённые Telegram user ID |
+| `TG_NOTIFY_CHAT_ID` | `None` | ID чата для уведомлений о смене статуса прокси |
+| `TG_BOT_PROXY` | `None` | SOCKS5-прокси для Telegram API (если Telegram заблокирован на сервере) |
+| `SUBSCRIPTION_URLS` | `[]` | URL подписок для опроса |
+| `SUBSCRIPTION_FETCH_INTERVAL` | `1800` | Интервал обновления подписок, сек |
+| `SUBSCRIPTION_TIMEOUT` | `30` | Таймаут загрузки подписки, сек |
+| `XRAY_BINARY` | `/usr/local/bin/xray` | Путь к бинарнику xray |
+| `XRAY_CONFIG_DIR` | `/tmp/vless-manager` | Директория для временных конфигов xray |
+| `PROXY_PORT_START` | `10800` | Первый SOCKS5-порт |
+| `PROXY_PORT_END` | `10820` | Последний SOCKS5-порт (размер пула = END − START + 1) |
 | `PROXY_BIND_HOST` | `127.0.0.1` | Адрес прослушивания SOCKS5 |
-
-Диапазон определяет максимальное количество одновременно работающих прокси (`END - START + 1`). При значениях по умолчанию — 21 прокси.
-
-### Health-check
-
-| Поле | По умолчанию | Описание |
-|------|---|---|
-| `CHECK_URL` | `https://www.linkedin.com` | URL для проверки (должен быть заблокирован без прокси) |
+| `CHECK_URL` | `https://www.linkedin.com` | URL для проверки живости (выбирайте сайт, заблокированный без прокси) |
 | `CHECK_TIMEOUT` | `10` | Таймаут одной проверки, сек |
-| `CHECK_INTERVAL` | `300` | Интервал плановых проверок всего пула, сек |
-| `CHECK_STARTUP_XRAY_WAIT` | `2` | Пауза после запуска xray перед первым запросом, сек |
+| `CHECK_INTERVAL` | `300` | Интервал между циклами проверок, сек |
+| `CHECK_STARTUP_XRAY_WAIT` | `2` | Ожидание перед HTTP-запросом после старта xray, сек |
+| `API_HOST` | `127.0.0.1` | Адрес REST API |
+| `API_PORT` | `8888` | Порт REST API |
+| `DB_PATH` | `./state.db` | Путь к SQLite базе |
 
-### REST API
+## Размер пула
 
-| Поле | По умолчанию | Описание |
-|------|---|---|
-| `API_HOST` | `127.0.0.1` | Адрес прослушивания |
-| `API_PORT` | `8888` | Порт |
-| `API_SECRET_KEY` | `""` | Bearer-токен для `POST /update`; пусто = эндпоинт отключён |
-
-Сгенерировать ключ: `python3 -c "import secrets; print(secrets.token_hex(32))"`.
-
-### Хранилище
-
-| Поле | По умолчанию | Описание |
-|------|---|---|
-| `DB_PATH` | `./state.db` | Путь к SQLite-файлу |
-
-### Файловый вотчер
-
-| Поле | По умолчанию | Описание |
-|------|---|---|
-| `VLESS_FILE` | `./vless.txt` | Файл со ссылками |
-| `FILE_CHECK_INTERVAL` | `30` | Интервал проверки изменений, сек |
-
-## Валидация
-
-Метод `settings.validate()` вызывается вручную (в точке входа) и проверяет:
-- `TG_BOT_TOKEN` не пустой
-- `XRAY_BINARY` существует (если нет — предупреждение, но не ошибка; сервис работает без xray в режиме отладки)
-- `PROXY_PORT_START < PROXY_PORT_END`
+Максимальное число одновременно активных прокси ограничено диапазоном портов: `PROXY_PORT_END - PROXY_PORT_START + 1`. По умолчанию 51 (10800–10850). В подписках может быть больше серверов — лишние остаются в статусе `pending` или `dead` до освобождения порта.

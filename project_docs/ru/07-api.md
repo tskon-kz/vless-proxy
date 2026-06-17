@@ -2,135 +2,56 @@
 
 [English](../en/07-api.md)
 
-## Создание приложения
-
-```python
-from api.server import create_api
-app = create_api(manager)  # FastAPI instance
-```
-
-Swagger UI и ReDoc отключены (`docs_url=None, redoc_url=None`).
+API поднимается на FastAPI + uvicorn. Swagger UI отключён.
 
 ## Эндпоинты
 
-### `GET /health`
+### `GET /proxy/best`
 
-Проверка живости сервиса. Всегда возвращает 200.
+Возвращает самый быстрый активный прокси. После каждого цикла проверок самый быстрый прокси переносится на `PROXY_PORT_START`, поэтому дополнительного измерения задержки здесь не требуется.
 
+**Ответ 200:**
 ```json
-{ "status": "ok" }
+{"url": "socks5://127.0.0.1:10800"}
+```
+
+**Ответ 503** (нет активных прокси):
+```json
+{"error": "no active proxies"}
 ```
 
 ---
 
 ### `GET /proxy/list`
 
-Список всех активных прокси с запущенными xray-процессами.
+Возвращает все активные прокси в виде JSON-массива, отсортированного по порту.
 
+**Ответ 200:**
 ```json
-{
-  "count": 2,
-  "proxies": [
-    {
-      "protocol": "socks5",
-      "host": "127.0.0.1",
-      "port": 10800,
-      "proxy_url": "socks5://127.0.0.1:10800",
-      "name": "Amsterdam",
-      "latency_ms": 142,
-      "last_check": 1718000000.0
-    }
-  ]
-}
+["socks5://127.0.0.1:10800", "socks5://127.0.0.1:10801"]
 ```
 
----
+Возвращает `[]`, если активных прокси нет.
 
-### `GET /proxy/random`
+## Примеры использования
 
-Случайный активный прокси. Возвращает тот же формат что `/proxy/list[0]`.
-
-503 если нет активных прокси:
-```json
-{ "error": "no_active_proxies", "message": "No active proxies available" }
-```
-
----
-
-### `GET /proxy/best`
-
-Прокси с минимальной задержкой (`latency_ms`). Прокси без измеренной задержки не участвуют в выборке.
-
-503 если нет кандидатов.
-
----
-
-### `GET /status`
-
-Подробный статус пула.
-
-```json
-{
-  "pool": {
-    "active": 3, "dead": 1, "pending": 0,
-    "invalid": 0, "running_processes": 3
-  },
-  "check_url": "https://www.linkedin.com",
-  "check_interval_seconds": 300,
-  "uptime_seconds": 3600.5,
-  "proxies": [
-    {
-      "name": "Amsterdam",
-      "host": "1.2.3.4",
-      "status": "active",
-      "local_port": 10800,
-      "latency_ms": 142,
-      "last_check": 1718000000.0,
-      "fail_count": 0
-    }
-  ]
-}
-```
-
----
-
-### `POST /update`
-
-Загрузить новые VLESS ссылки. Требует Bearer-токен.
-
-Если `API_SECRET_KEY` не задан — возвращает 404 (эндпоинт скрыт).
-
-**Запрос:**
 ```bash
-curl -X POST http://127.0.0.1:8888/update \
-  -H "Authorization: Bearer YOUR_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"links": ["vless://..."]}'
+# Shell: получить лучший прокси
+PROXY=$(curl -sf http://127.0.0.1:8888/proxy/best | jq -r .url)
+curl --proxy "$PROXY" https://example.com
+
+# Python
+import httpx
+url = httpx.get("http://127.0.0.1:8888/proxy/best").json()["url"]
+with httpx.Client(proxy=url) as client:
+    print(client.get("https://example.com").status_code)
 ```
 
-**Ответ:**
-```json
-{
-  "total_received": 5,
-  "valid": 4,
-  "invalid": 1,
-  "newly_added": 2,
-  "removed": 1,
-  "errors": ["URI must start with vless://: ..."]
-}
+## Доступ снаружи
+
+По умолчанию API слушает только `127.0.0.1`. Чтобы открыть доступ с других хостов:
+
+```env
+API_HOST=0.0.0.0
+PROXY_BIND_HOST=1.2.3.4   # реальный IP сервера; встраивается в URL прокси в ответах API
 ```
-
-401 при неверном токене, 422 при неверном теле запроса.
-
-## Авторизация
-
-```python
-def _bearer_auth(request: Request) -> None:
-    if not settings.API_SECRET_KEY:
-        raise HTTPException(status_code=404)
-    auth = request.headers.get("Authorization", "")
-    if not auth.startswith("Bearer ") or auth[7:] != settings.API_SECRET_KEY:
-        raise HTTPException(status_code=401)
-```
-
-Возврат 404 (а не 401) при отсутствии ключа намеренный — не раскрывает факт существования эндпоинта.

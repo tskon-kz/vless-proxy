@@ -2,23 +2,25 @@
 
 [Русский](../ru/05-health.md)
 
-## How checks work
+## Check flow
 
-Each proxy is verified in two steps:
+Each proxy check runs in two stages:
 
-1. **TCP ping** — `check_proxy_tcp(host, port)` — attempts to open a TCP connection to the server. If TCP fails, the proxy is immediately marked `dead` without launching xray.
+1. **TCP ping** (`check_proxy_tcp`) — connects to `host:port`. Fast and cheap; fails immediately for unreachable servers.
+2. **HTTP check** (`check_proxy`) — only if TCP succeeds. Starts a temporary xray process, sends an HTTP request to `CHECK_URL` through it, expects a response with a status code in `{200, 301, 302, 303, 307, 308, 403, 404, 429, 999}`. Measures latency.
 
-2. **HTTP through xray** — `check_proxy(proxy_id, config)` — starts a temporary xray process on port `19900 + (proxy_id % 100)`, makes a GET request to `CHECK_URL` via that SOCKS5 port, and inspects the response status.
+A proxy is marked **active** only if the HTTP check succeeds. TCP failure alone marks it **dead**.
 
-After the check the temporary xray process is stopped and its config file is deleted.
+## `HealthChecker`
 
-## Success status codes
+| Method | Description |
+|---|---|
+| `check_one(proxy, config, on_status_change?)` | Check a single proxy; update DB; call callback if status changed |
+| `check_pending(on_status_change?)` | Check all `pending` proxies concurrently |
+| `check_all_active(on_status_change?)` | Check all `active` proxies concurrently |
+| `check_dead(on_status_change?)` | Check all `dead` proxies concurrently |
 
-```python
-_SUCCESS_STATUSES = {200, 301, 302, 303, 307, 308, 403, 404, 429, 999}
-```
-
-Rationale: any of these codes means traffic reached the target — the proxy is alive. 403/404 from LinkedIn means the request went through but was blocked for some reason. A timeout or connection error means dead.
+Concurrent checks are batched internally; each proxy is checked independently.
 
 ## `HealthResult`
 
@@ -27,45 +29,15 @@ Rationale: any of these codes means traffic reached the target — the proxy is 
 class HealthResult:
     proxy_id: int
     success: bool
-    latency_ms: int | None    # set only when success=True
+    latency_ms: int | None
     status_code: int | None
-    error: str                 # error description when success=False
-    checked_at: float          # unix timestamp
+    error: str
+    checked_at: float
     check_url: str
 ```
 
-## `HealthChecker`
-
-Main class. Concurrency is capped at 5 simultaneous checks via `asyncio.Semaphore(5)`.
-
-```python
-checker = HealthChecker(storage)
-```
-
-### Methods
-
-**`check_one(proxy, config, on_status_change=None) → HealthResult`**
-
-Checks a single proxy, updates the DB status, calls `on_status_change(result)` if provided.
-
-**`check_pending(on_status_change=None) → list[HealthResult]`**
-
-Checks all proxies with status `pending`. Called immediately after new links are added.
-
-**`check_all_active(on_status_change=None) → list[HealthResult]`**
-
-Checks all active proxies. Scheduled check — in case some went down.
-
-**`run_forever(on_status_change=None)`**
-
-Infinite loop: check active → check pending → `sleep(CHECK_INTERVAL)`.
-
 ## `on_status_change` callback
 
-A synchronous function `(HealthResult) → None`. Called after each check. `HealthChecker` delivers the result here; `ProxyManager` uses it to start/stop xray processes and send Telegram notifications.
+Called after `check_one` completes if the proxy's status changed. In `ProxyManager`, this callback starts or stops the corresponding xray process and sends a Telegram notification if configured.
 
-The callback is synchronous by design — `HealthChecker` must not depend on manager logic. The manager creates an asyncio task inside the callback.
-
-## Port isolation
-
-Health checks use ports `19900–19999` (formula: `19900 + proxy_id % 100`). These never overlap with the working pool (`10800–10820`), so checks do not interfere with running proxies.
+The callback fires only on actual status transitions (`active → dead` or `dead/pending → active`). First-time checks (proxy has no previous status) do not trigger notifications.

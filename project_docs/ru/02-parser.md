@@ -2,89 +2,46 @@
 
 [English](../en/02-parser.md)
 
-## Формат VLESS URI
+## `parse_vless(uri: str) -> ParseResult`
 
-```
-vless://<uuid>@<host>:<port>?<params>#<name>
-```
+Парсит одну `vless://` ссылку. Возвращает `ParseResult` с полями:
+- `success: bool`
+- `config: VlessConfig | None` — заполняется при успехе
+- `raw_uri: str` — канонический URI (фрагмент убран, query-параметры отсортированы по алфавиту)
+- `error: str` — описание ошибки при неудаче
 
-Пример:
-```
-vless://9d507afd-7e90-4b7e-8bd8-6877f7a304ae@1.2.3.4:443?security=reality&sni=example.com&pbk=KEY&sid=AB12#Amsterdam
-```
+`raw_uri` — ключ идентификации в базе данных. Сортировка параметров гарантирует, что один и тот же сервер, возвращённый подпиской с разным порядком параметров, не создаст дублирующую запись в БД.
 
-## Структуры данных
+## `parse_vless_list(text: str) -> tuple[list[VlessConfig], list[ParseResult]]`
 
-### `VlessConfig`
+Парсит список URI, разделённых переносами строк. Пропускает пустые строки и строки без `vless://`. Дедублицирует по `raw_uri`.
 
-Датакласс, хранящий все поля разобранной ссылки:
+## Поля `VlessConfig`
 
 | Поле | Описание |
-|------|----------|
-| `uuid` | UUID пользователя |
-| `host` | Адрес сервера |
+|---|---|
+| `uuid` | UUID пользователя VLESS |
+| `host` | Хост или IP сервера |
 | `port` | Порт сервера |
-| `raw_uri` | Исходная строка (используется как уникальный ключ в БД) |
-| `name` | Имя из фрагмента URI (`#Название`) |
-| `type` | Транспорт: `tcp`, `ws`, `grpc` и др. |
+| `raw_uri` | Канонический URI без фрагмента |
+| `name` | Отображаемое имя (декодируется из `#fragment`) |
+| `type` | Транспорт: `tcp`, `ws`, `grpc`, `http`, `kcp`, `quic` |
 | `security` | Безопасность: `none`, `tls`, `reality` |
-| `flow` | Поток XTLS: `xtls-rprx-vision` или пусто |
-| `sni` | Server Name Indication |
-| `fp` | Fingerprint браузера |
-| `alpn` | Через запятую: `h2,http/1.1` |
+| `flow` | Flow control (например `xtls-rprx-vision`) |
+| `sni` | SNI для TLS/Reality |
+| `fp` | TLS fingerprint |
 | `pbk` | Публичный ключ Reality |
 | `sid` | Short ID для Reality |
-| `path` | Путь для WebSocket |
-| `host_header` | Host-заголовок для WebSocket |
-| `service_name` | Имя сервиса для gRPC |
+| `path` | Путь WebSocket |
+| `service_name` | Имя gRPC-сервиса |
 
-### `ParseResult`
+## Валидация
 
-```python
-@dataclass
-class ParseResult:
-    success: bool
-    raw_uri: str
-    config: VlessConfig | None   # заполнен при success=True
-    error: str                   # заполнен при success=False
-```
-
-## Публичные функции
-
-### `parse_vless(uri) → ParseResult`
-
-Парсит одну ссылку. Возвращает `ParseResult` с `success=False` и описанием ошибки если ссылка невалидна.
-
-```python
-result = parse_vless("vless://...")
-if result.success:
-    print(result.config.host)
-```
-
-### `validate_config(config) → list[str]`
-
-Проверяет распарсенный конфиг на корректность. Возвращает список ошибок (пустой = всё хорошо):
-
-- UUID должен быть валидным UUID4
-- Host не может быть пустым; hostname без точки (кроме `localhost`) отклоняется
-- Port в диапазоне 1–65535
-- Transport type должен быть из: `tcp`, `ws`, `grpc`, `http`, `kcp`, `quic`
-- WebSocket: `path` должен начинаться с `/`
-- Reality: обязательны `pbk` и `sni`
-- `flow=xtls-rprx-vision` требует `security=reality` или `security=tls`
-
-### `parse_vless_list(text) → (list[VlessConfig], list[ParseResult])`
-
-Парсит текст, содержащий несколько ссылок. Ссылки могут быть разделены пробелами, переносами строк, находиться в произвольном тексте — функция извлекает всё начинающееся с `vless://`.
-
-Дедупликация по ключу `(uuid, host, port)` — если одна ссылка повторяется с разными параметрами (например, разным `#name`), берётся первая.
-
-```python
-configs, results = parse_vless_list(text)
-# configs — только успешно разобранные, без дублей
-# results — все попытки, включая ошибки (для отчёта)
-```
-
-### `generate_summary(results) → str`
-
-Формирует читаемый текст-отчёт: сколько валидных, сколько с ошибками, и перечень ошибок.
+`validate_config()` проверяет:
+- Формат UUID
+- Корректность хоста (IP или hostname с точкой)
+- Диапазон порта (1–65535)
+- Известный тип транспорта
+- Путь WebSocket начинается с `/`
+- Reality требует `pbk` и `sni`
+- Flow `xtls-rprx-vision` требует `security=reality` или `security=tls`

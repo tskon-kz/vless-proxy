@@ -2,135 +2,56 @@
 
 [Русский](../ru/07-api.md)
 
-## Creating the app
-
-```python
-from api.server import create_api
-app = create_api(manager)  # FastAPI instance
-```
-
-Swagger UI and ReDoc are disabled (`docs_url=None, redoc_url=None`).
+The API is served by FastAPI + uvicorn. Swagger UI is disabled.
 
 ## Endpoints
 
-### `GET /health`
+### `GET /proxy/best`
 
-Service liveness check. Always returns 200.
+Returns the fastest active proxy. The fastest proxy is always reordered to `PROXY_PORT_START` after each health cycle, so no additional latency measurement is needed here.
 
+**Response 200:**
 ```json
-{ "status": "ok" }
+{"url": "socks5://127.0.0.1:10800"}
+```
+
+**Response 503** (no active proxies):
+```json
+{"error": "no active proxies"}
 ```
 
 ---
 
 ### `GET /proxy/list`
 
-All active proxies with running xray processes.
+Returns all active proxy URLs as a plain JSON array, sorted by port.
 
+**Response 200:**
 ```json
-{
-  "count": 2,
-  "proxies": [
-    {
-      "protocol": "socks5",
-      "host": "127.0.0.1",
-      "port": 10800,
-      "proxy_url": "socks5://127.0.0.1:10800",
-      "name": "Amsterdam",
-      "latency_ms": 142,
-      "last_check": 1718000000.0
-    }
-  ]
-}
+["socks5://127.0.0.1:10800", "socks5://127.0.0.1:10801"]
 ```
 
----
+Returns `[]` if no proxies are active.
 
-### `GET /proxy/random`
+## Usage examples
 
-A random active proxy. Same response shape as a single item from `/proxy/list`.
-
-503 when no active proxies:
-```json
-{ "error": "no_active_proxies", "message": "No active proxies available" }
-```
-
----
-
-### `GET /proxy/best`
-
-The proxy with the lowest `latency_ms`. Proxies without a measured latency are excluded.
-
-503 when no candidates.
-
----
-
-### `GET /status`
-
-Detailed pool status.
-
-```json
-{
-  "pool": {
-    "active": 3, "dead": 1, "pending": 0,
-    "invalid": 0, "running_processes": 3
-  },
-  "check_url": "https://www.linkedin.com",
-  "check_interval_seconds": 300,
-  "uptime_seconds": 3600.5,
-  "proxies": [
-    {
-      "name": "Amsterdam",
-      "host": "1.2.3.4",
-      "status": "active",
-      "local_port": 10800,
-      "latency_ms": 142,
-      "last_check": 1718000000.0,
-      "fail_count": 0
-    }
-  ]
-}
-```
-
----
-
-### `POST /update`
-
-Submit new VLESS links. Requires a Bearer token.
-
-If `API_SECRET_KEY` is not set — returns 404 (endpoint is hidden).
-
-**Request:**
 ```bash
-curl -X POST http://127.0.0.1:8888/update \
-  -H "Authorization: Bearer YOUR_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"links": ["vless://..."]}'
+# Shell: get best proxy
+PROXY=$(curl -sf http://127.0.0.1:8888/proxy/best | jq -r .url)
+curl --proxy "$PROXY" https://example.com
+
+# Python
+import httpx
+url = httpx.get("http://127.0.0.1:8888/proxy/best").json()["url"]
+with httpx.Client(proxy=url) as client:
+    print(client.get("https://example.com").status_code)
 ```
 
-**Response:**
-```json
-{
-  "total_received": 5,
-  "valid": 4,
-  "invalid": 1,
-  "newly_added": 2,
-  "removed": 1,
-  "errors": ["URI must start with vless://: ..."]
-}
+## External access
+
+By default the API listens on `127.0.0.1`. To expose it to other hosts:
+
+```env
+API_HOST=0.0.0.0
+PROXY_BIND_HOST=1.2.3.4   # real server IP; embedded in proxy URLs returned by the API
 ```
-
-401 on wrong token, 422 on malformed request body.
-
-## Authentication
-
-```python
-def _bearer_auth(request: Request) -> None:
-    if not settings.API_SECRET_KEY:
-        raise HTTPException(status_code=404)
-    auth = request.headers.get("Authorization", "")
-    if not auth.startswith("Bearer ") or auth[7:] != settings.API_SECRET_KEY:
-        raise HTTPException(status_code=401)
-```
-
-Returning 404 (not 401) when no key is configured is intentional — it does not reveal the existence of the endpoint.

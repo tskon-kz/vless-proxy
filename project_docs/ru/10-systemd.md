@@ -2,118 +2,16 @@
 
 [English](../en/10-systemd.md)
 
-## Требования
-
-- Ubuntu 22.04+
-- Python 3.11+
-- [uv](https://github.com/astral-sh/uv)
-
-## Установка uv
+## Установка
 
 ```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
-
-## Шаги
-
-### 1. Клонировать репозиторий
-
-```bash
-git clone <repo> /opt/vless-proxy
-cd /opt/vless-proxy
-```
-
-### 2. Установить xray-core
-
-```bash
-bash scripts/install-xray.sh
-which xray   # должно вернуть /usr/local/bin/xray
-```
-
-### 3. Настроить окружение
-
-```bash
-cp .env.example .env
-nano .env
-```
-
-Обязательно заполнить:
-- `TG_BOT_TOKEN` — токен от @BotFather
-- `TG_ALLOWED_USER_IDS` — ваш Telegram ID
-
-Получить свой ID можно у бота @userinfobot.
-
-Сгенерировать `API_SECRET_KEY` если нужен API:
-```bash
-python3 -c "import secrets; print(secrets.token_hex(32))"
-```
-
-### 4. Установить зависимости
-
-```bash
-uv sync
-```
-
-### 5. Настроить systemd-службу
-
-В репозитории лежит шаблон. Скопируйте его и заполните реальные значения:
-
-```bash
-cp scripts/vless-manager.service.example scripts/vless-manager.service
-nano scripts/vless-manager.service
-```
-
-Заменить:
-- `/path/to/vless-proxy` → реальный путь (например `/opt/vless-proxy`)
-- `YOUR_USERNAME` → имя пользователя, от которого запускать
-
-Отредактированный файл добавлен в `.gitignore` — он не будет появляться в `git status`.
-
-```bash
-sudo cp scripts/vless-manager.service /etc/systemd/system/
+cp scripts/vless-manager.service.example /etc/systemd/system/vless-manager.service
+nano /etc/systemd/system/vless-manager.service   # прописать WorkingDirectory и User
 sudo systemctl daemon-reload
-sudo systemctl enable vless-manager
+sudo systemctl enable --now vless-manager
 ```
 
-### 6. Запустить
-
-```bash
-sudo systemctl start vless-manager
-sudo systemctl status vless-manager
-```
-
-## Управление службой
-
-```bash
-# Статус
-systemctl status vless-manager
-
-# Перезапуск (например после правки .env)
-systemctl restart vless-manager
-
-# Остановка
-systemctl stop vless-manager
-
-# Логи в реальном времени
-journalctl -u vless-manager -f
-
-# Только ошибки
-journalctl -u vless-manager -p err
-
-# Логи за последний час
-journalctl -u vless-manager --since "1 hour ago"
-```
-
-## Обновление кода
-
-```bash
-cd /opt/vless-proxy
-git pull
-uv sync
-systemctl restart vless-manager
-```
-
-## Шаблон файла службы (`scripts/vless-manager.service.example`)
+## Файл сервиса
 
 ```ini
 [Unit]
@@ -122,10 +20,10 @@ After=network.target
 
 [Service]
 Type=simple
-User=YOUR_USERNAME
-WorkingDirectory=/path/to/vless-proxy
-EnvironmentFile=/path/to/vless-proxy/.env
-ExecStart=/path/to/vless-proxy/.venv/bin/python main.py
+User=root
+WorkingDirectory=/root/vless-proxy
+EnvironmentFile=/root/vless-proxy/.env
+ExecStart=/root/vless-proxy/.venv/bin/python main.py
 Restart=on-failure
 RestartSec=5
 KillSignal=SIGTERM
@@ -138,4 +36,21 @@ SyslogIdentifier=vless-manager
 WantedBy=multi-user.target
 ```
 
-`ExecStart` использует Python из виртуального окружения `.venv`, созданного командой `uv sync`. Путь абсолютный — systemd не поддерживает относительные пути в `ExecStart`.
+Замените `WorkingDirectory`, `User` и `ExecStart` на актуальные значения.
+
+## Основные команды
+
+```bash
+sudo systemctl start vless-manager      # запустить
+sudo systemctl stop vless-manager       # остановить
+sudo systemctl restart vless-manager    # перезапустить (после изменений кода/конфига)
+sudo systemctl status vless-manager     # проверить статус
+journalctl -u vless-manager -f          # следить за логами
+journalctl -u vless-manager -n 100      # последние 100 строк логов
+```
+
+## Примечания
+
+- `Restart=on-failure` — сервис автоматически перезапустится при падении.
+- При каждом старте база прокси очищается и подписки загружаются заново.
+- Бинарник xray должен быть установлен до запуска сервиса (`bash scripts/install-xray.sh`).

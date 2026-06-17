@@ -1,10 +1,10 @@
-# Архитектура
+# Архитектура и обзор
 
 [English](../en/00-overview.md)
 
 ## Что делает сервис
 
-Принимает VLESS-ссылки из трёх источников (Telegram-бот, файл `vless.txt`, REST API), валидирует их, проверяет живость через xray-core и держит пул рабочих SOCKS5-прокси на локальных портах.
+Скачивает списки VLESS-серверов из подписок, проверяет их живость через xray-core и поддерживает пул рабочих SOCKS5-прокси на локальных портах. Самый быстрый сервер всегда доступен на `PROXY_PORT_START`.
 
 ## Компоненты
 
@@ -12,10 +12,9 @@
 main.py
 ├── ProxyManager              — центральный оркестратор
 │   ├── Storage               — SQLite база данных
-│   ├── XrayProcessPool       — пул xray-процессов
-│   ├── HealthChecker         — проверка живости
-│   └── SubscriptionManager   — задачи поллинга подписок
-├── FileWatcher               — наблюдает за vless.txt
+│   ├── XrayProcessPool       — пул постоянных процессов xray
+│   ├── HealthChecker         — проверка живости прокси
+│   └── SubscriptionManager   — задачи обновления подписок
 ├── FastAPI (uvicorn)         — REST API
 └── Bot + Dispatcher          — Telegram-бот (aiogram 3)
 ```
@@ -23,68 +22,44 @@ main.py
 ## Жизненный цикл прокси
 
 ```
-Входящие ссылки (бот / файл / API / подписка)
+SUBSCRIPTION_URLS (из .env)
           │
           ▼
-    parse_vless()              парсинг и валидация URI
+  SubscriptionFetcher         загрузка + декодирование base64
           │
           ▼
-  storage.replace_all()        сохранение в БД, статус → pending
-  (или replace_subscription_proxies для подписок)
+    parse_vless_list()        парсинг и валидация URI
           │
           ▼
-    HealthChecker              TCP-пинг + HTTP через временный xray
+  replace_subscription_proxies()
+    новые URI    → статус: pending
+    исчезнувшие  → статус: dead
+          │
+          ▼
+    HealthChecker             TCP ping → HTTP через временный xray
           │
      ┌────┴────┐
-   жив        мёртв
-     │          └──► если прокси подписки: проверить следующий
-     ▼               pending из той же подписки
-XrayProcessPool                запуск постоянного xray-процесса
+   живой      мёртвый
      │
      ▼
-socks5://127.0.0.1:<port>      доступно клиентам через API
+XrayProcessPool               запуск постоянного процесса xray
+     │
+     ▼
+socks5://PROXY_BIND_HOST:<port>   доступен через API
 ```
 
-## Статусы прокси в БД
+## Статусы прокси
 
-| Статус    | Когда                                         |
-|-----------|-----------------------------------------------|
-| `pending` | Только добавлен, ещё не проверен              |
-| `active`  | Жив, xray-процесс запущен                     |
-| `dead`    | Не прошёл проверку; `fail_count` растёт       |
-
-## Порты
-
-- **10800–10820** — SOCKS5-порты пула (`PROXY_PORT_START` / `PROXY_PORT_END`)
-- **19900–19999** — временные порты для health-check; не пересекаются с пулом
-
-## Хранение состояния
-
-Единственный источник правды — SQLite (`state.db`). `vless.txt` — временный входной канал: после загрузки удаляется. При перезапуске сервиса активные прокси восстанавливаются из БД и xray-процессы поднимаются снова.
-
-## Стек
-
-| Библиотека | Роль |
+| Статус | Значение |
 |---|---|
-| pydantic-settings | Конфигурация через env/`.env` |
-| aiosqlite | Асинхронный SQLite |
-| aiohttp | HTTP-клиент в health-checker и fetcher подписок |
-| FastAPI + uvicorn | REST API |
-| aiogram 3 | Telegram-бот |
-| xray-core | Внешний Go-бинарник; туннелирует трафик |
+| `pending` | Только добавлен или вернулся из подписки; ещё не проверен |
+| `active` | Живой; постоянный процесс xray запущен на SOCKS5-порту |
+| `dead` | Не прошёл проверку; перепроверяется раз в 3 цикла |
 
-## Индекс модулей
+## Назначение портов
 
-| Файл | Документация |
-|---|---|
-| `config.py` | [Конфигурация](01-config.md) |
-| `core/parser.py` | [Парсер VLESS ссылок](02-parser.md) |
-| `core/storage.py` | [Хранилище (SQLite)](03-storage.md) |
-| `core/xray.py` | [Управление xray-core](04-xray.md) |
-| `core/health.py` | [Проверка живости](05-health.md) |
-| `core/manager.py` | [Оркестратор](06-manager.md) |
-| `api/server.py` | [REST API](07-api.md) |
-| `bot/bot.py` | [Telegram-бот](08-bot.md) |
-| `core/watcher.py` | [Файловый вотчер](09-watcher.md) |
-| systemd | [Деплой](10-systemd.md) |
-| `core/subscription.py` | [Подписки](11-subscription.md) |
+После каждого цикла проверок активные прокси сортируются по задержке. Самый быстрый получает `PROXY_PORT_START`, следующий — `PROXY_PORT_START + 1` и т.д. `/proxy/best` всегда возвращает `PROXY_PORT_START`.
+
+## Поведение при запуске
+
+При каждом запуске таблица прокси очищается, а `last_fetch` сбрасывается в `NULL`, поэтому подписки загружаются немедленно. Это предотвращает накопление устаревших данных между перезапусками.

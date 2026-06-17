@@ -1,20 +1,17 @@
 # VLESS Proxy Manager
 
-Сервис для управления пулом VLESS прокси: принимает ссылки, проверяет живость через xray-core и отдаёт рабочие SOCKS5 прокси через REST API и Telegram-бота.
+Сервис для управления пулом VLESS прокси через подписки: скачивает список серверов, проверяет живость через xray-core и отдаёт рабочие SOCKS5 прокси через REST API и Telegram-бота.
+
+[English version](README.md)
 
 ## Быстрый старт
 
-### Локальная разработка (macOS / Linux)
+### Локально (macOS / Linux)
 
 ```bash
-# 1. Установить xray-core
 bash scripts/install-xray.sh
-
-# 2. Настроить окружение
 cp .env.example .env
-nano .env   # обязательно: TG_BOT_TOKEN, TG_ALLOWED_USER_IDS
-
-# 3. Установить зависимости и запустить
+nano .env          # обязательно: TG_BOT_TOKEN, TG_ALLOWED_USER_IDS, SUBSCRIPTION_URLS
 uv sync
 uv run python main.py
 ```
@@ -22,120 +19,103 @@ uv run python main.py
 ### Ubuntu-сервер (systemd)
 
 ```bash
-# 1. Клонировать репозиторий
 git clone <repo> && cd vless-proxy
-
-# 2. Установить xray-core и зависимости
 bash scripts/install-xray.sh
 cp .env.example .env && nano .env
 uv sync
 
-# 3. Настроить и запустить службу
-cp scripts/vless-manager.service.example scripts/vless-manager.service
-nano scripts/vless-manager.service   # прописать WorkingDirectory (вместо `/root`) и User (вместо `root`)
-sudo cp scripts/vless-manager.service /etc/systemd/system/
+cp scripts/vless-manager.service.example /etc/systemd/system/vless-manager.service
+nano /etc/systemd/system/vless-manager.service   # прописать WorkingDirectory и User
 sudo systemctl daemon-reload
 sudo systemctl enable --now vless-manager
 ```
 
-Логи:
 ```bash
-journalctl -u vless-manager -f
+journalctl -u vless-manager -f          # логи
+sudo systemctl restart vless-manager    # перезапуск после изменений кода/конфига
 ```
 
 ## Настройки (.env)
 
 | Переменная | По умолчанию | Описание |
 |---|---|---|
-| `TG_BOT_TOKEN` | — | Токен бота от @BotFather (обязательно) |
-| `TG_ALLOWED_USER_IDS` | — | Telegram ID через запятую (обязательно) |
-| `TG_NOTIFY_CHAT_ID` | — | Куда слать уведомления о смене статуса прокси |
+| `TG_BOT_TOKEN` | — | Токен бота от @BotFather **(обязательно)** |
+| `TG_ALLOWED_USER_IDS` | `[]` | JSON-массив Telegram user ID **(обязательно)** |
+| `TG_NOTIFY_CHAT_ID` | — | ID чата для уведомлений о смене статуса |
+| `TG_BOT_PROXY` | — | SOCKS5-прокси для подключения к Telegram API |
+| `SUBSCRIPTION_URLS` | `[]` | JSON-массив URL подписок **(обязательно)** |
+| `SUBSCRIPTION_FETCH_INTERVAL` | `1800` | Интервал обновления подписок, сек |
+| `SUBSCRIPTION_TIMEOUT` | `30` | Таймаут загрузки подписки, сек |
 | `XRAY_BINARY` | `/usr/local/bin/xray` | Путь к бинарнику xray |
-| `XRAY_CONFIG_DIR` | `/tmp/vless-manager` | Временные конфиги xray |
-| `PROXY_PORT_START` | `10800` | Начало диапазона SOCKS5 портов |
-| `PROXY_PORT_END` | `10820` | Конец диапазона SOCKS5 портов |
+| `XRAY_CONFIG_DIR` | `/tmp/vless-manager` | Временная директория для конфигов xray |
+| `PROXY_PORT_START` | `10800` | Первый SOCKS5-порт |
+| `PROXY_PORT_END` | `10820` | Последний SOCKS5-порт |
 | `PROXY_BIND_HOST` | `127.0.0.1` | Адрес прослушивания SOCKS5 |
 | `CHECK_URL` | `https://www.linkedin.com` | URL для проверки живости (должен быть заблокирован без прокси) |
 | `CHECK_TIMEOUT` | `10` | Таймаут одной проверки, сек |
-| `CHECK_INTERVAL` | `300` | Интервал между плановыми проверками, сек |
+| `CHECK_INTERVAL` | `300` | Интервал между циклами проверок, сек |
 | `API_HOST` | `127.0.0.1` | Адрес REST API |
 | `API_PORT` | `8888` | Порт REST API |
-| `API_SECRET_KEY` | — | Bearer-токен для `POST /update` (пусто = эндпоинт отключён) |
 | `DB_PATH` | `./state.db` | Путь к SQLite базе данных |
-| `VLESS_FILE` | `./vless.txt` | Файл со ссылками для автозагрузки |
-| `FILE_CHECK_INTERVAL` | `30` | Интервал проверки файла, сек |
 
-## Как добавить прокси
-
-**Через Telegram-бота** — отправьте ссылки `vless://` текстом или `.txt` файлом.
-
-**Через подписку** — `/sub_add https://sub.example.com/token [название]`. Сервис скачивает список немедленно и затем опрашивает по расписанию (раз в `SUBSCRIPTION_FETCH_INTERVAL` секунд, по умолчанию 1 час). Прокси подписок изолированы от ручных обновлений.
-
-**Через файл** — создайте `vless.txt` со ссылками (по одной на строку, `#` — комментарий). HTTP/HTTPS-строки воспринимаются как URL подписок. Сервис загрузит файл при старте и удалит его. Если положить файл во время работы — подхватит через `FILE_CHECK_INTERVAL` секунд.
-
-**Через REST API:**
-```bash
-curl -X POST http://127.0.0.1:8888/update \
-  -H "Authorization: Bearer YOUR_SECRET_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"links": ["vless://..."]}'
+`SUBSCRIPTION_URLS` задаётся в формате JSON-массива:
+```env
+SUBSCRIPTION_URLS=["https://sub.example.com/token"]
+SUBSCRIPTION_URLS=["https://sub1.example.com/token","https://sub2.example.com/token"]
 ```
 
 ## REST API
 
-| Метод | Путь | Авторизация | Описание |
-|---|---|---|---|
-| GET | `/health` | — | Проверка живости сервиса |
-| GET | `/status` | — | Статистика пула и список активных прокси |
-| GET | `/proxy/list` | — | Список всех активных прокси |
-| GET | `/proxy/random` | — | Случайный активный прокси |
-| GET | `/proxy/best` | — | Прокси с минимальной задержкой |
-| POST | `/update` | Bearer | Загрузить новые VLESS ссылки |
-| GET | `/subscriptions` | Bearer | Список подписок с количеством прокси |
-| POST | `/subscriptions` | Bearer | Добавить подписку |
-| DELETE | `/subscriptions/{id}` | Bearer | Удалить подписку и её прокси |
-| POST | `/subscriptions/{id}/refresh` | Bearer | Принудительное обновление |
+| Метод | Путь | Описание |
+|---|---|---|
+| GET | `/proxy/best` | Самый быстрый прокси (минимальная задержка) |
+| GET | `/proxy/list` | Все активные прокси в виде массива |
 
-Пример использования прокси из ответа API:
+```bash
+curl http://127.0.0.1:8888/proxy/best
+# {"url": "socks5://127.0.0.1:10800"}
+
+curl http://127.0.0.1:8888/proxy/list
+# ["socks5://127.0.0.1:10800", "socks5://127.0.0.1:10801"]
+```
+
 ```python
 import httpx
 
-info = httpx.get("http://127.0.0.1:8888/proxy/best").json()
-# info["proxy_url"] == "socks5://127.0.0.1:10800"
-
-with httpx.Client(proxy=info["proxy_url"]) as client:
+url = httpx.get("http://127.0.0.1:8888/proxy/best").json()["url"]
+with httpx.Client(proxy=url) as client:
     print(client.get("https://example.com").status_code)
 ```
 
-### Доступ снаружи
+## Telegram-бот
 
-По умолчанию и API, и SOCKS5-порты слушают только `127.0.0.1`. Чтобы открыть доступ с других машин:
+| Команда | Описание |
+|---|---|
+| `/status` | Статистика пула и список активных прокси |
+| `/check` | Принудительная проверка всех серверов |
+| `/help` | Справка |
 
-```env
-API_HOST=0.0.0.0          # API доступен извне
-PROXY_BIND_HOST=1.2.3.4   # реальный публичный IP сервера, не 0.0.0.0
-```
+Если задан `TG_NOTIFY_CHAT_ID`, бот отправляет сообщение при смене статуса прокси в процессе работы (при старте уведомления не отправляются).
 
-`PROXY_BIND_HOST` важно ставить реальным IP, а не `0.0.0.0`: API вставляет его в поле `proxy_url` каждого ответа (`socks5://<PROXY_BIND_HOST>:<port>`), и клиент получает готовый адрес для подключения.
+## Как это работает
 
-> **Безопасность:** GET-эндпоинты (`/proxy/list`, `/status` и др.) не требуют авторизации — любой, кто достучится до API, увидит список прокси. Ограничьте доступ через файрвол или поставьте reverse proxy с аутентификацией.
-> `POST /update` защищён `API_SECRET_KEY` (или скрыт, если ключ не задан).
+1. При каждом запуске база прокси очищается, подписки загружаются немедленно.
+2. Каждая подписка обновляется раз в `SUBSCRIPTION_FETCH_INTERVAL` секунд (по умолчанию 30 мин).
+3. После обновления новые прокси проверяются на живость; пропавшие помечаются мёртвыми.
+4. Для каждого активного прокси запускается постоянный процесс xray на отдельном SOCKS5-порту.
+5. Самый быстрый прокси (минимальная задержка) всегда занимает `PROXY_PORT_START`.
+6. Проверки идут каждые `CHECK_INTERVAL` секунд; мёртвые перепроверяются раз в 3 цикла.
 
 ## Подробная документация
 
 - [Архитектура и обзор](project_docs/ru/00-overview.md)
 - [Конфигурация](project_docs/ru/01-config.md)
-- [Парсер VLESS ссылок](project_docs/ru/02-parser.md)
+- [Парсер VLESS](project_docs/ru/02-parser.md)
 - [Хранилище (SQLite)](project_docs/ru/03-storage.md)
 - [Управление xray-core](project_docs/ru/04-xray.md)
 - [Проверка живости](project_docs/ru/05-health.md)
-- [Оркестратор](project_docs/ru/06-manager.md)
+- [Менеджер (оркестратор)](project_docs/ru/06-manager.md)
 - [REST API](project_docs/ru/07-api.md)
 - [Telegram-бот](project_docs/ru/08-bot.md)
-- [Файловый вотчер](project_docs/ru/09-watcher.md)
-- [Деплой (systemd)](project_docs/ru/10-systemd.md)
 - [Подписки](project_docs/ru/11-subscription.md)
-
----
-
-[English version](README.md)
+- [Деплой (systemd)](project_docs/ru/10-systemd.md)

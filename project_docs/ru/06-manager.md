@@ -1,81 +1,50 @@
-# Оркестратор (`core/manager.py`)
+# Менеджер / Оркестратор (`core/manager.py`)
 
 [English](../en/06-manager.md)
 
-## Роль
+`ProxyManager` — центральный компонент, связывающий хранилище, процессы xray, проверки живости и подписки.
 
-`ProxyManager` — центральный компонент который связывает Storage, XrayProcessPool и HealthChecker. Все входные каналы (бот, файл, API) работают только через него.
-
-## Инициализация
+## Запуск
 
 ```python
-storage = Storage(settings.DB_PATH)
-manager = ProxyManager(storage)
 await manager.startup()
 ```
 
-`startup()`:
-1. Инициализирует БД
-2. Восстанавливает xray-процессы для всех `active` прокси из БД
-3. Запускает проверку `pending` прокси в фоне
-4. Запускает бесконечный цикл health-check (`run_forever`)
+1. Вызывает `storage.init()` — очищает таблицу прокси, сбрасывает `last_fetch` подписок.
+2. Запускает `SubscriptionManager` — создаёт задачу-поллер для каждой подписки; каждая сразу делает фетч (т.к. `last_fetch = NULL`).
+3. Запускает цикл проверок живости.
 
-## Добавление прокси
+## Цикл проверок
 
-```python
-report = await manager.update_proxies(raw_links, source="telegram")
-```
-
-`update_proxies()` под `asyncio.Lock`:
-1. Парсит ссылки через `parse_vless_list`
-2. Вызывает `storage.replace_all` — сохраняет в БД, помечает исчезнувшие как `dead`
-3. Останавливает xray-процессы для удалённых прокси
-4. Запускает health-check для новых `pending` прокси в фоне
-
-Возвращает `UpdateReport`:
-
-```python
-@dataclass
-class UpdateReport:
-    total_received: int   # len(raw_links) — все входящие строки
-    valid: int            # успешно разобранные
-    invalid: int          # total_received - valid
-    parse_errors: list[str]
-    newly_added: int      # новые (не были в БД)
-    already_known: int    # обновлённые (уже были)
-    removed: int          # помечены dead
-    source: str           # "telegram" / "file" / "api"
-```
-
-## Реакция на смену статуса
-
-Когда health-check завершает проверку, он вызывает синхронный колбэк `_status_change_callback`, который создаёт задачу `_on_health_change`:
+Выполняется каждые `CHECK_INTERVAL` секунд (по умолчанию 5 мин):
 
 ```
-прокси жив  → process_pool.start_proxy()   (если ещё не запущен)
-прокси мёртв → process_pool.stop_proxy()  (если был запущен)
-              → notify_callback(proxy, result)  (если настроен)
+sleep CHECK_INTERVAL
+→ check_all_active
+→ check_pending
+→ check_dead  (только каждый 3-й цикл)
+→ переупорядочить по задержке
 ```
 
-## Уведомления в Telegram
+## Обработка смены статуса (`_on_health_change`)
 
-```python
-manager.notify_callback: Callable[[ProxyRow, HealthResult], Awaitable[None]] | None
-```
+Вызывается после каждой проверки, изменившей статус прокси:
 
-Устанавливается из `bot.py` если задан `TG_NOTIFY_CHAT_ID`. Принимает сырые данные — форматирование текста остаётся в `bot/strings.py`, менеджер не знает про Telegram.
+- **Стал активным** → запустить процесс xray, если ещё не запущен.
+- **Стал мёртвым** → остановить процесс xray, если запущен.
+- **Уведомление** → отправить сообщение в Telegram, если задан `TG_NOTIFY_CHAT_ID` и у прокси есть предыдущий известный статус (при первом появлении уведомлений нет).
 
-## Получение прокси для клиента
+## Переупорядочивание портов (`_reorder_by_latency`)
 
-```python
-info = await manager.get_proxy_for_client()   # случайный активный
-status = await manager.get_status()            # полный статус пула
-```
+После каждого цикла проверок активные прокси сортируются по `latency_ms`. Самый быстрый переносится на `PROXY_PORT_START`, следующий на `PROXY_PORT_START + 1` и т.д. Прокси, уже стоящие на правильном порту, не перезапускаются.
 
-`get_proxy_for_client()` перемешивает список активных и возвращает первый у которого есть работающий процесс.
+## `ProxyManager.get_status() → ManagerStatus`
 
-## Фоновые задачи
+Возвращает:
+- `pool_stats: PoolStats` — количество active/dead/pending прокси и запущенных процессов
+- `active_proxies: list[ProxyInfo]` — имя, хост, локальный порт, задержка для каждого запущенного прокси
+- `uptime_seconds: float`
 
-Чтобы фоновые задачи не были потеряны GC (asyncio не держит слабые ссылки), менеджер хранит их в `_background_tasks: set[asyncio.Task]` и удаляет по завершении через `done_callback`.
+## `ProxyManager.force_recheck()`
 
-При `shutdown()` все фоновые задачи отменяются, xray-процессы останавливаются, соединение с БД закрывается.
+Немедленно запускает полный цикл проверки активных и pending прокси (используется командой `/check` бота).
