@@ -1,10 +1,6 @@
-import logging
-import os
 from typing import List
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
-logger = logging.getLogger(__name__)
 
 
 class Settings(BaseSettings):
@@ -47,22 +43,5 @@ class Settings(BaseSettings):
     SUBSCRIPTION_URLS: List[str] = []
     SUBSCRIPTION_FETCH_INTERVAL: int = 1800  # 30 minutes
     SUBSCRIPTION_TIMEOUT: int = 30
-
-    def validate(self) -> None:
-        if not self.TG_BOT_TOKEN:
-            raise ValueError("TG_BOT_TOKEN is required")
-
-        if not os.path.exists(self.XRAY_BINARY):
-            logger.warning(
-                "XRAY_BINARY not found at %s — service will start without xray (debug mode)",
-                self.XRAY_BINARY,
-            )
-
-        if self.PROXY_PORT_START >= self.PROXY_PORT_END:
-            raise ValueError(
-                f"PROXY_PORT_START ({self.PROXY_PORT_START}) must be less than "
-                f"PROXY_PORT_END ({self.PROXY_PORT_END})"
-            )
-
 
 settings = Settings()

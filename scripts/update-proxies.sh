@@ -1,21 +1,16 @@
 #!/usr/bin/env bash
-# Update the VLESS links file consumed by the file watcher.
-# Usage:
-#   echo "vless://..." | ./scripts/update-proxies.sh       # from stdin
-#   ./scripts/update-proxies.sh "vless://..." "vless://..."  # as arguments
+# Query the local proxy API and print current status.
+# Usage: ./scripts/update-proxies.sh [api_host] [api_port]
 
 set -euo pipefail
 
-VLESS_FILE="${VLESS_FILE:-./vless.txt}"
-FILE_CHECK_INTERVAL="${FILE_CHECK_INTERVAL:-30}"
+HOST="${1:-127.0.0.1}"
+PORT="${2:-8888}"
+BASE="http://${HOST}:${PORT}"
 
-if [ -p /dev/stdin ]; then
-    cat > "$VLESS_FILE"
-elif [ "$#" -gt 0 ]; then
-    printf '%s\n' "$@" > "$VLESS_FILE"
-else
-    echo "Usage: echo 'vless://...' | $0  OR  $0 'vless://...' 'vless://...'" >&2
-    exit 1
-fi
+echo "=== Best proxy ==="
+curl -sf "${BASE}/proxy/best" | python3 -m json.tool || echo "(none)"
 
-echo "Updated $VLESS_FILE — watcher will pick up in ${FILE_CHECK_INTERVAL}s"
+echo ""
+echo "=== All active proxies ==="
+curl -sf "${BASE}/proxy/list" | python3 -m json.tool || echo "(none)"
