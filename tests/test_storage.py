@@ -142,7 +142,7 @@ class TestProcesses:
     async def test_set_process_pid(self, storage, config_a):
         proxy_id = await storage.upsert_proxy(config_a)
         await storage.upsert_process(proxy_id, local_port=10800, config_path="/tmp/x.json")
-        await storage.set_process_pid(proxy_id, pid=1234, status="running")
+        await storage.set_process_pid(proxy_id, local_port=10800, pid=1234, status="running")
 
         proc = await storage.get_process(proxy_id)
         assert proc.pid == 1234
@@ -158,8 +158,8 @@ class TestProcesses:
         id_b = await storage.upsert_proxy(config_b)
         await storage.upsert_process(id_a, local_port=10800, config_path="/tmp/a.json")
         await storage.upsert_process(id_b, local_port=10801, config_path="/tmp/b.json")
-        await storage.set_process_pid(id_a, pid=100, status="running")
-        await storage.set_process_pid(id_b, pid=101, status="running")
+        await storage.set_process_pid(id_a, local_port=10800, pid=100, status="running")
+        await storage.set_process_pid(id_b, local_port=10801, pid=101, status="running")
 
         port = await storage.get_available_port()
         assert port == 10802
@@ -177,7 +177,7 @@ class TestProcesses:
             configs.append(cfg)
             proxy_id = await storage.upsert_proxy(cfg)
             await storage.upsert_process(proxy_id, local_port=port, config_path=f"/tmp/{i}.json")
-            await storage.set_process_pid(proxy_id, pid=1000 + i, status="running")
+            await storage.set_process_pid(proxy_id, local_port=port, pid=1000 + i, status="running")
 
         port = await storage.get_available_port()
         assert port is None
@@ -199,7 +199,7 @@ class TestGetStats:
         proxy_id = await storage.upsert_proxy(config_a)
         await storage.set_proxy_status(proxy_id, "active")
         await storage.upsert_process(proxy_id, local_port=10800, config_path="/tmp/x.json")
-        await storage.set_process_pid(proxy_id, pid=999, status="running")
+        await storage.set_process_pid(proxy_id, local_port=10800, pid=999, status="running")
 
         stats = await storage.get_stats()
         assert stats.running_processes == 1

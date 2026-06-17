@@ -130,7 +130,7 @@ class TestUpdateProxies:
         for proxy_id in (id_a, id_b):
             await storage.set_proxy_status(proxy_id, "active")
             await storage.upsert_process(proxy_id, 10800 + proxy_id, f"/tmp/{proxy_id}.json")
-            await storage.set_process_pid(proxy_id, 1000 + proxy_id, "running")
+            await storage.set_process_pid(proxy_id, 10800 + proxy_id, 1000 + proxy_id, "running")
             proc = XrayProcess(proxy_id, 10800 + proxy_id, f"/tmp/{proxy_id}.json", storage)
             proc._proc = MagicMock()
             proc._proc.returncode = None
@@ -245,7 +245,7 @@ class TestGetStatus:
         proxy_id = await storage.upsert_proxy(config)
         await storage.set_proxy_status(proxy_id, "active", latency_ms=42)
         await storage.upsert_process(proxy_id, 10800, "/tmp/x.json")
-        await storage.set_process_pid(proxy_id, 1234, "running")
+        await storage.set_process_pid(proxy_id, 10800, 1234, "running")
 
         status = await manager.get_status()
         assert len(status.active_proxies) == 1
@@ -273,7 +273,7 @@ class TestGetProxyForClient:
         proxy_id = await storage.upsert_proxy(config)
         await storage.set_proxy_status(proxy_id, "active")
         await storage.upsert_process(proxy_id, 10800, "/tmp/x.json")
-        await storage.set_process_pid(proxy_id, 1234, "running")
+        await storage.set_process_pid(proxy_id, 10800, 1234, "running")
 
         result = await manager.get_proxy_for_client()
         assert isinstance(result, ProxyInfo)
@@ -284,7 +284,7 @@ class TestGetProxyForClient:
         proxy_id = await storage.upsert_proxy(config)
         await storage.set_proxy_status(proxy_id, "active")
         await storage.upsert_process(proxy_id, 10800, "/tmp/x.json")
-        await storage.set_process_pid(proxy_id, None, "stopped")
+        await storage.set_process_pid(proxy_id, 10800, None, "stopped")
 
         result = await manager.get_proxy_for_client()
         assert result is None

@@ -194,7 +194,7 @@ class XrayProcess:
             self._pid,
             returncode,
         )
-        await self._storage.set_process_pid(self._proxy_id, None, "crashed")
+        await self._storage.set_process_pid(self._proxy_id, self._local_port, None, "crashed")
 
     async def stop(self) -> None:
         if self._proc is None or self._proc.returncode is not None:
@@ -251,7 +251,7 @@ class XrayProcessPool:
 
         proc = XrayProcess(proxy_id, port, config_path, self._storage)
         pid = await proc.start()
-        await self._storage.set_process_pid(proxy_id, pid, "running")
+        await self._storage.set_process_pid(proxy_id, port, pid, "running")
 
         self._processes[proxy_id] = proc
         return proc
@@ -260,8 +260,9 @@ class XrayProcessPool:
         proc = self._processes.pop(proxy_id, None)
         if proc is None:
             return
+        port = proc.local_port
         await proc.stop()
-        await self._storage.set_process_pid(proxy_id, None, "stopped")
+        await self._storage.set_process_pid(proxy_id, port, None, "stopped")
 
     async def stop_all(self) -> None:
         for proxy_id in list(self._processes.keys()):

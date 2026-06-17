@@ -209,6 +209,11 @@ class Storage:
         await self._db.execute(_CREATE_SUBSCRIPTIONS)
         # Reset stale process states from any previous unclean shutdown
         await self._db.execute("UPDATE processes SET status = 'stopped', pid = NULL")
+        # Remove duplicate process rows accumulated across restarts (keep latest per proxy)
+        await self._db.execute(
+            "DELETE FROM processes WHERE rowid NOT IN "
+            "(SELECT MAX(rowid) FROM processes GROUP BY proxy_id)"
+        )
         # Migrations for existing DBs
         for ddl in (
             "ALTER TABLE proxies ADD COLUMN source TEXT DEFAULT 'manual'",
@@ -406,6 +411,10 @@ class Storage:
         self, proxy_id: int, local_port: int, config_path: str
     ) -> None:
         await self._conn.execute(
+            "DELETE FROM processes WHERE proxy_id = ? AND local_port != ?",
+            (proxy_id, local_port),
+        )
+        await self._conn.execute(
             """
             INSERT INTO processes (proxy_id, local_port, config_path, status)
             VALUES (?, ?, ?, 'stopped')
@@ -420,16 +429,16 @@ class Storage:
         await self._conn.commit()
 
     async def set_process_pid(
-        self, proxy_id: int, pid: int | None, status: str
+        self, proxy_id: int, local_port: int, pid: int | None, status: str
     ) -> None:
         now = time.time()
         await self._conn.execute(
             """
             UPDATE processes
             SET pid = ?, status = ?, started_at = ?
-            WHERE proxy_id = ?
+            WHERE proxy_id = ? AND local_port = ?
             """,
-            (pid, status, now if pid is not None else None, proxy_id),
+            (pid, status, now if pid is not None else None, proxy_id, local_port),
         )
         await self._conn.commit()
 
