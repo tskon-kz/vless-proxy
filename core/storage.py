@@ -207,6 +207,8 @@ class Storage:
         await self._db.execute(_CREATE_PROCESSES)
         await self._db.execute(_CREATE_UPDATE_LOG)
         await self._db.execute(_CREATE_SUBSCRIPTIONS)
+        # Reset stale process states from any previous unclean shutdown
+        await self._db.execute("UPDATE processes SET status = 'stopped', pid = NULL")
         # Migrations for existing DBs
         for ddl in (
             "ALTER TABLE proxies ADD COLUMN source TEXT DEFAULT 'manual'",

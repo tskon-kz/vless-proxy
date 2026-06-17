@@ -57,6 +57,7 @@ class ProxyManager:
         self._started_at: float = time.time()
         self._background_tasks: set[asyncio.Task] = set()
         self.notify_callback: Callable[[ProxyRow, HealthResult], Awaitable[None]] | None = None
+        self._last_notified: dict[int, bool] = {}
 
     def _create_task(self, coro) -> asyncio.Task:
         task = asyncio.create_task(coro)
@@ -70,7 +71,14 @@ class ProxyManager:
 
         self.subscription_manager = SubscriptionManager(self.storage, self)
 
-        active = await self.storage.get_active_proxies()
+        all_known = await self.storage.get_all_proxies()
+        for proxy in all_known:
+            if proxy.status == "active":
+                self._last_notified[proxy.id] = True
+            elif proxy.status == "dead":
+                self._last_notified[proxy.id] = False
+
+        active = [p for p in all_known if p.status == "active"]
         restored = 0
         for proxy in active:
             config = vless_config_from_proxy(proxy)
@@ -176,7 +184,11 @@ class ProxyManager:
             if proxy.subscription_id and self.subscription_manager:
                 await self._replace_dead_from_subscription(proxy)
 
-        if self.notify_callback and settings.TG_NOTIFY_CHAT_ID:
+        prev_success = self._last_notified.get(result.proxy_id)
+        status_changed = prev_success is None or prev_success != result.success
+        self._last_notified[result.proxy_id] = result.success
+
+        if status_changed and self.notify_callback and settings.TG_NOTIFY_CHAT_ID:
             try:
                 await self.notify_callback(proxy, result)
             except Exception as exc:
