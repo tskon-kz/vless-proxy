@@ -312,6 +312,12 @@ class Storage:
         ) as cursor:
             return [_row_to_proxy(r) async for r in cursor]
 
+    async def get_dead_proxies(self) -> list[ProxyRow]:
+        async with self._conn.execute(
+            "SELECT * FROM proxies WHERE status = 'dead'"
+        ) as cursor:
+            return [_row_to_proxy(r) async for r in cursor]
+
     async def get_all_proxies(self) -> list[ProxyRow]:
         async with self._conn.execute("SELECT * FROM proxies") as cursor:
             return [_row_to_proxy(r) async for r in cursor]

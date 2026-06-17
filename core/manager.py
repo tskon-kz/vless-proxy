@@ -102,11 +102,7 @@ class ProxyManager:
 
         await self.subscription_manager.startup()
 
-        self._health_task = asyncio.create_task(
-            self.health_checker.run_forever(
-                on_status_change=self._status_change_callback
-            )
-        )
+        self._health_task = asyncio.create_task(self._health_loop())
 
     async def shutdown(self) -> None:
         if self.subscription_manager:
@@ -295,6 +291,30 @@ class ProxyManager:
     async def force_recheck(self) -> None:
         self._create_task(self._run_full_check())
 
+    async def _health_loop(self) -> None:
+        cycle = 0
+        while True:
+            logger.info("health check cycle %d started", cycle)
+            await self.health_checker.check_all_active(
+                on_status_change=self._status_change_callback
+            )
+            await self.health_checker.check_pending(
+                on_status_change=self._status_change_callback
+            )
+            if cycle % 3 == 0:
+                logger.info("rechecking dead proxies (cycle %d)", cycle)
+                await self.health_checker.check_dead(
+                    on_status_change=self._status_change_callback
+                )
+            await self._reorder_by_latency()
+            logger.info(
+                "health check cycle %d done, sleeping %ds",
+                cycle,
+                settings.CHECK_INTERVAL,
+            )
+            cycle += 1
+            await asyncio.sleep(settings.CHECK_INTERVAL)
+
     async def _run_full_check(self) -> None:
         await self.health_checker.check_all_active(
             on_status_change=self._status_change_callback
@@ -302,6 +322,7 @@ class ProxyManager:
         await self.health_checker.check_pending(
             on_status_change=self._status_change_callback
         )
+        await self._reorder_by_latency()
 
     async def get_proxy_for_client(self) -> ProxyInfo | None:
         active = await self.storage.get_active_proxies()

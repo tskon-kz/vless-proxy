@@ -246,6 +246,12 @@ class HealthChecker:
         proxies = await self._storage.get_pending_proxies()
         return await self._check_batch(proxies, on_status_change)
 
+    async def check_dead(
+        self, on_status_change: Callable | None = None
+    ) -> list[HealthResult]:
+        proxies = await self._storage.get_dead_proxies()
+        return await self._check_batch(proxies, on_status_change)
+
     async def _check_batch(
         self,
         proxies: list[ProxyRow],

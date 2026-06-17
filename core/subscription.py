@@ -144,11 +144,30 @@ class SubscriptionManager:
             await self._storage.replace_subscription_proxies(sub_id, valid_configs)
             await self._storage.update_subscription_fetch(sub_id, len(valid_configs), success=True)
             logger.info("subscription %d refreshed: %d proxies", sub_id, len(valid_configs))
+
+            # Stop xray processes for proxies removed from this subscription
+            all_proxies = await self._storage.get_all_proxies()
+            for proxy in all_proxies:
+                if proxy.subscription_id == sub_id and proxy.status == "dead":
+                    if self._proxy_manager.process_pool.get_process(proxy.id) is not None:
+                        await self._proxy_manager.process_pool.stop_proxy(proxy.id)
+
             self._proxy_manager._create_task(
-                self._proxy_manager.health_checker.check_pending(
-                    on_status_change=self._proxy_manager._status_change_callback
-                )
+                self._proxy_manager._check_pending_and_reorder()
             )
+            # Re-check active proxies from this subscription so stale/moved servers
+            # are caught without waiting for the next global health-check cycle
+            active_sub_proxies = [
+                p for p in all_proxies
+                if p.subscription_id == sub_id and p.status == "active"
+            ]
+            if active_sub_proxies:
+                self._proxy_manager._create_task(
+                    self._proxy_manager.health_checker._check_batch(
+                        active_sub_proxies,
+                        on_status_change=self._proxy_manager._status_change_callback,
+                    )
+                )
         else:
             await self._storage.update_subscription_fetch(sub_id, 0, success=True)
 
