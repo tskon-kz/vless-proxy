@@ -4,7 +4,7 @@ from typing import Any, Awaitable, Callable
 from aiogram import Bot, Dispatcher, Router
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.filters import Command
-from aiogram.types import Message
+from aiogram.types import BotCommand, Message
 
 from bot import strings
 from config import settings
@@ -65,6 +65,13 @@ async def cmd_status(message: Message, manager: ProxyManager) -> None:
     await message.answer(text)
 
 
+_COMMANDS = [
+    BotCommand(command="status", description="Состояние пула прокси"),
+    BotCommand(command="check", description="Принудительная проверка всех серверов"),
+    BotCommand(command="help", description="Справка"),
+]
+
+
 def create_bot(manager: ProxyManager) -> tuple[Bot, Dispatcher]:
     session = AiohttpSession(proxy=settings.TG_BOT_PROXY) if settings.TG_BOT_PROXY else None
     bot = Bot(token=settings.TG_BOT_TOKEN, session=session)
@@ -72,6 +79,10 @@ def create_bot(manager: ProxyManager) -> tuple[Bot, Dispatcher]:
     dp.message.middleware(AccessMiddleware())
     dp.include_router(router)
     dp["manager"] = manager
+
+    @dp.startup()
+    async def _set_commands() -> None:
+        await bot.set_my_commands(_COMMANDS)
 
     if settings.TG_NOTIFY_CHAT_ID:
         async def _notify(proxy, result) -> None:
