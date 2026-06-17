@@ -1,9 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BASE_URL="https://github.com/XTLS/Xray-core/releases/latest/download"
-INSTALL_PATH="/usr/local/bin/xray"
+# Installs xray binary into ./bin/xray relative to the project root.
+# Run from anywhere: bash scripts/install-xray.sh
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+INSTALL_DIR="$PROJECT_DIR/bin"
+INSTALL_PATH="$INSTALL_DIR/xray"
 TMP_DIR="$(mktemp -d)"
+
+BASE_URL="https://github.com/XTLS/Xray-core/releases/latest/download"
 
 cleanup() {
     rm -rf "$TMP_DIR"
@@ -53,14 +60,10 @@ fi
 echo "Extracting ..."
 unzip -q "$TMP_DIR/$archive" -d "$TMP_DIR"
 
-echo "Installing xray to $INSTALL_PATH ..."
-if [ "$os" = "Darwin" ] && [ ! -w "$(dirname "$INSTALL_PATH")" ]; then
-    sudo install -m 755 "$TMP_DIR/xray" "$INSTALL_PATH"
-else
-    install -m 755 "$TMP_DIR/xray" "$INSTALL_PATH"
-fi
+mkdir -p "$INSTALL_DIR"
+install -m 755 "$TMP_DIR/xray" "$INSTALL_PATH"
 
-echo "Verifying installation ..."
-xray version
+echo "Installed: $INSTALL_PATH"
+"$INSTALL_PATH" version
 
-echo "Done."
+echo "Done. Set XRAY_BINARY=./bin/xray in your .env"

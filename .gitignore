@@ -30,6 +30,9 @@ ENV/
 # Systemd service file (generated from scripts/vless-manager.service.example)
 scripts/vless-manager.service
 
+# xray binary
+bin/
+
 # Runtime state
 state.db
 state.db-shm

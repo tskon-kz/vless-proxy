@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     TG_BOT_PROXY: str | None = None
 
     # xray
-    XRAY_BINARY: str = "/usr/local/bin/xray"
+    XRAY_BINARY: str = "./bin/xray"
     XRAY_CONFIG_DIR: str = "/tmp/vless-manager"
 
     # Proxy pool
