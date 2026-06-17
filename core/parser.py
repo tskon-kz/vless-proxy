@@ -1,7 +1,7 @@
 import ipaddress
 import uuid as uuid_module
 from dataclasses import dataclass, field
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse, urlunparse
 
 
 @dataclass
@@ -73,11 +73,14 @@ def parse_vless(uri: str) -> ParseResult:
         name = unquote(parsed.fragment) if parsed.fragment else ""
         params = parse_qs(parsed.query, keep_blank_values=True)
 
+        # Strip fragment so that server renames don't create new DB entries
+        raw_uri = urlunparse(parsed._replace(fragment=""))
+
         config = VlessConfig(
             uuid=raw_uuid,
             host=hostname,
             port=port_val,
-            raw_uri=uri,
+            raw_uri=raw_uri,
             name=name,
             type=_first(params, "type", "tcp"),
             security=_first(params, "security", "none"),
@@ -159,7 +162,7 @@ def parse_vless_list(text: str) -> tuple[list[VlessConfig], list[ParseResult]]:
     for line in text.splitlines():
         tokens.extend(line.split())
 
-    seen: set[tuple[str, str, int]] = set()
+    seen: set[tuple[str, int]] = set()
     configs: list[VlessConfig] = []
     results: list[ParseResult] = []
 
@@ -172,7 +175,7 @@ def parse_vless_list(text: str) -> tuple[list[VlessConfig], list[ParseResult]]:
         results.append(result)
 
         if result.success and result.config is not None:
-            key = (result.config.uuid, result.config.host, result.config.port)
+            key = (result.config.host, result.config.port)
             if key not in seen:
                 seen.add(key)
                 configs.append(result.config)

@@ -71,7 +71,7 @@ def status_message(
         lines.append("\n🔌 Активные прокси:")
         for p in proxies:
             latency = f"{p['latency_ms']}ms" if p.get("latency_ms") is not None else "—"
-            lines.append(f"• {p['name']} — порт {p['local_port']}, {latency}")
+            lines.append(f"• {p['name']} ({p['host']}) — порт {p['local_port']}, {latency}")
     lines.append(f"\n🔍 Проверочный URL: {_domain(settings.CHECK_URL)}")
     interval_min = settings.CHECK_INTERVAL // 60
     lines.append(f"⏱ Интервал проверок: {interval_min} мин")

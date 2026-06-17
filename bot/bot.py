@@ -57,6 +57,7 @@ async def cmd_status(message: Message, manager: ProxyManager) -> None:
     proxies = [
         {
             "name": p.name or p.host,
+            "host": p.host,
             "local_port": p.local_port,
             "latency_ms": p.latency_ms,
         }

@@ -223,6 +223,56 @@ class Storage:
                 await self._db.execute(ddl)
             except Exception:
                 pass  # column already exists
+
+        # Strip URI fragments from raw_uri (fragments are display names, not part of identity)
+        async with self._db.execute(
+            "SELECT id, raw_uri FROM proxies WHERE raw_uri LIKE '%#%'"
+        ) as cursor:
+            rows = await cursor.fetchall()
+        for row in rows:
+            canonical = row["raw_uri"].split("#")[0]
+            async with self._db.execute(
+                "SELECT id FROM proxies WHERE raw_uri = ? AND id != ?",
+                (canonical, row["id"]),
+            ) as dup_cursor:
+                dup = await dup_cursor.fetchone()
+            if dup:
+                await self._db.execute("DELETE FROM proxies WHERE id = ?", (row["id"],))
+            else:
+                await self._db.execute(
+                    "UPDATE proxies SET raw_uri = ? WHERE id = ?",
+                    (canonical, row["id"]),
+                )
+
+        # Deduplicate proxies by (host, port) per subscription.
+        # For each group keep the row with best status (active > pending > dead)
+        # and lowest id as tiebreaker; delete the rest.
+        await self._db.execute(
+            """
+            DELETE FROM proxies
+            WHERE subscription_id IS NOT NULL
+              AND id NOT IN (
+                SELECT id FROM proxies p
+                WHERE subscription_id IS NOT NULL
+                  AND NOT EXISTS (
+                    SELECT 1 FROM proxies p2
+                    WHERE p2.subscription_id = p.subscription_id
+                      AND p2.host = p.host
+                      AND p2.port = p.port
+                      AND p2.id != p.id
+                      AND (
+                        CASE p2.status WHEN 'active' THEN 0 WHEN 'pending' THEN 1 ELSE 2 END
+                        < CASE p.status WHEN 'active' THEN 0 WHEN 'pending' THEN 1 ELSE 2 END
+                        OR (
+                          CASE p2.status WHEN 'active' THEN 0 WHEN 'pending' THEN 1 ELSE 2 END
+                          = CASE p.status WHEN 'active' THEN 0 WHEN 'pending' THEN 1 ELSE 2 END
+                          AND p2.id < p.id
+                        )
+                      )
+                  )
+              )
+            """
+        )
         await self._db.commit()
 
     @property
