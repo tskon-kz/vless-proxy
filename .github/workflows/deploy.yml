@@ -23,6 +23,7 @@ jobs:
             git reset --hard origin/main
 
             # Sync dependencies (uv creates/updates .venv automatically)
+            export PATH="$HOME/.local/bin:$PATH"
             uv sync --no-dev
 
             # Restart the service
