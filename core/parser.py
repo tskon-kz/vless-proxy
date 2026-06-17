@@ -158,20 +158,16 @@ def validate_config(config: VlessConfig) -> list[str]:
 
 
 def parse_vless_list(text: str) -> tuple[list[VlessConfig], list[ParseResult]]:
-    tokens: list[str] = []
-    for line in text.splitlines():
-        tokens.extend(line.split())
-
     seen: set[tuple[str, int]] = set()
     configs: list[VlessConfig] = []
     results: list[ParseResult] = []
 
-    for token in tokens:
-        token = token.strip()
-        if not token or not token.startswith("vless://"):
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or not line.startswith("vless://"):
             continue
 
-        result = parse_vless(token)
+        result = parse_vless(line)
         results.append(result)
 
         if result.success and result.config is not None:
