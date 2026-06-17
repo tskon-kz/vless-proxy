@@ -208,6 +208,37 @@ class Storage:
             raise RuntimeError("Storage.init() has not been called")
         return self._db
 
+    async def upsert_proxy(self, config: VlessConfig) -> int:
+        now = time.time()
+        params_json = json.dumps(asdict(config))
+        async with self._conn.execute(
+            """
+            INSERT INTO proxies
+                (raw_uri, uuid, host, port, name, security, type, flow,
+                 params_json, status, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+            ON CONFLICT(raw_uri) DO UPDATE SET
+                uuid        = excluded.uuid,
+                host        = excluded.host,
+                port        = excluded.port,
+                name        = excluded.name,
+                security    = excluded.security,
+                type        = excluded.type,
+                flow        = excluded.flow,
+                params_json = excluded.params_json,
+                updated_at  = excluded.updated_at
+            RETURNING id
+            """,
+            (
+                config.raw_uri, config.uuid, config.host, config.port,
+                config.name, config.security, config.type, config.flow,
+                params_json, now, now,
+            ),
+        ) as cursor:
+            row = await cursor.fetchone()
+        await self._conn.commit()
+        return row["id"]
+
     async def set_proxy_status(
         self,
         proxy_id: int,

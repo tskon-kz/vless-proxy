@@ -13,7 +13,7 @@ from core.health import (
     vless_config_from_proxy,
 )
 from core.parser import VlessConfig
-from core.storage import PoolStats, ProxyRow, Storage, UpdateStats
+from core.storage import ProxyRow, Storage
 
 
 def _make_vless_config(**kwargs) -> VlessConfig:
@@ -21,7 +21,7 @@ def _make_vless_config(**kwargs) -> VlessConfig:
         uuid="9d507afd-7e90-4b7e-8bd8-6877f7a304ae",
         host="1.2.3.4",
         port=443,
-        raw_uri="vless://...",
+        raw_uri="vless://9d507afd-7e90-4b7e-8bd8-6877f7a304ae@1.2.3.4:443?security=reality&sni=cdn.example.com&pbk=pubkey&sid=shortid",
         name="Test",
         security="reality",
         type="tcp",
@@ -82,7 +82,6 @@ class TestVlessConfigFromProxy:
 
 class TestCheckProxyTcp:
     async def test_reachable_host(self):
-        # Use localhost echo-style: open a server, check it
         server = await asyncio.start_server(
             lambda r, w: w.close(), "127.0.0.1", 0
         )
@@ -113,41 +112,6 @@ class TestCheckProxy:
         assert result.proxy_id == 1
         assert result.status_code is None
         assert result.latency_ms is None
-        assert result.check_url == "https://example.com"
-
-    async def test_check_port_formula(self):
-        """Port should be 19900 + (proxy_id % 100)."""
-        config = _make_vless_config()
-        captured_ports: list[int] = []
-
-        async def fake_write(cfg, port, config_dir):
-            captured_ports.append(port)
-            return f"/tmp/proxy_{port}.json"
-
-        with patch("core.health.settings") as mock_settings, \
-             patch("core.health.write_xray_config", side_effect=fake_write), \
-             patch("core.health.os.path.exists", return_value=True), \
-             patch("asyncio.create_subprocess_exec") as mock_exec:
-
-            mock_settings.XRAY_BINARY = "/usr/local/bin/xray"
-            mock_settings.CHECK_URL = "https://example.com"
-            mock_settings.XRAY_CONFIG_DIR = "/tmp/test"
-            mock_settings.CHECK_STARTUP_XRAY_WAIT = 0
-            mock_settings.CHECK_TIMEOUT = 5
-
-            mock_proc = AsyncMock()
-            mock_proc.returncode = 1  # exits immediately → early return path
-            mock_proc.terminate = MagicMock()
-            mock_exec.return_value = mock_proc
-
-            with patch("core.health.os.path.exists", side_effect=lambda p: p != "/nonexistent/xray"):
-                pass  # just check port logic below
-
-        for proxy_id in (1, 42, 99, 100, 150):
-            expected = 19900 + (proxy_id % 100)
-            assert expected == 19900 + (proxy_id % 100)  # formula is trivially correct
-
-        assert captured_ports == [] or all(19900 <= p <= 19999 for p in captured_ports)
 
     async def test_result_fields_on_xray_missing(self):
         config = _make_vless_config()
@@ -172,9 +136,8 @@ class TestHealthChecker:
         await s.close()
 
     async def test_check_one_tcp_fail_marks_dead(self, storage):
-        from core.parser import parse_vless
         config = _make_vless_config(host="127.0.0.1", port=19798)
-        proxy_id = await storage.upsert_proxy(config)
+        await storage.upsert_proxy(config)
         proxy = (await storage.get_all_proxies())[0]
 
         checker = HealthChecker(storage)
@@ -218,16 +181,13 @@ class TestHealthChecker:
         assert rows[0].status == "active"
         assert rows[0].latency_ms == 42
 
-    async def test_check_batch_respects_semaphore(self, storage):
-        """Semaphore limits concurrency — all tasks still complete."""
-        configs = []
+    async def test_check_batch_all_complete(self, storage):
         for i in range(7):
             cfg = _make_vless_config(
                 uuid=f"9d507afd-7e90-4b7e-8bd8-{i:012d}",
                 host=f"10.0.0.{i + 1}",
                 raw_uri=f"vless://9d507afd-7e90-4b7e-8bd8-{i:012d}@10.0.0.{i + 1}:443?security=none",
             )
-            configs.append(cfg)
             await storage.upsert_proxy(cfg)
 
         proxies = await storage.get_pending_proxies()

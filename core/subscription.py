@@ -100,10 +100,10 @@ class SubscriptionManager:
         subs = await self._storage.list_subscriptions()
         results = []
         for sub in subs:
-            results.append(await self._refresh(sub.id))
+            results.append(await self.refresh(sub.id))
         return results
 
-    async def _refresh(self, sub_id: int) -> FetchResult:
+    async def refresh(self, sub_id: int) -> FetchResult:
         from core.parser import parse_vless_list
 
         sub = await self._storage.get_subscription(sub_id)
@@ -136,7 +136,6 @@ class SubscriptionManager:
             self._proxy_manager._check_pending_and_reorder()
         )
 
-        # Stop xray for any proxies removed from this subscription
         for proxy in await self._storage.get_all_proxies():
             if proxy.subscription_id == sub_id and proxy.status == "dead":
                 if self._proxy_manager.process_pool.get_process(proxy.id) is not None:
@@ -155,7 +154,7 @@ class SubscriptionManager:
                 if wait > 0:
                     await asyncio.sleep(wait)
                 try:
-                    await self._refresh(sub.id)
+                    await self.refresh(sub.id)
                     updated = await self._storage.get_subscription(sub.id)
                     if updated:
                         sub.last_fetch = updated.last_fetch

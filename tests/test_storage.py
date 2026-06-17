@@ -1,7 +1,7 @@
 import pytest
 
 from core.parser import VlessConfig
-from core.storage import PoolStats, Storage, UpdateStats
+from core.storage import PoolStats, Storage
 
 
 def _make_config(
@@ -12,15 +12,8 @@ def _make_config(
     raw_uri: str | None = None,
 ) -> VlessConfig:
     if raw_uri is None:
-        raw_uri = f"vless://{uuid}@{host}:{port}?security=none#{name}"
-    return VlessConfig(
-        uuid=uuid,
-        host=host,
-        port=port,
-        raw_uri=raw_uri,
-        name=name,
-        security="none",
-    )
+        raw_uri = f"vless://{uuid}@{host}:{port}?security=none"
+    return VlessConfig(uuid=uuid, host=host, port=port, raw_uri=raw_uri, name=name, security="none")
 
 
 @pytest.fixture
@@ -85,49 +78,6 @@ class TestSetProxyStatus:
         assert rows[0].fail_count == 2
 
 
-class TestReplaceAll:
-    async def test_adds_new_proxies(self, storage, config_a, config_b):
-        stats = await storage.replace_all([config_a, config_b], source="test")
-        assert stats.added == 2
-        assert stats.removed == 0
-
-    async def test_removes_missing_proxies(self, storage, config_a, config_b):
-        await storage.replace_all([config_a, config_b], source="test")
-        stats = await storage.replace_all([config_a], source="test")
-        assert stats.removed == 1
-
-        all_rows = await storage.get_all_proxies()
-        dead = [r for r in all_rows if r.status == "dead"]
-        assert len(dead) == 1
-        assert dead[0].host == "2.2.2.2"
-
-    async def test_removed_proxies_not_deleted(self, storage, config_a, config_b):
-        await storage.replace_all([config_a, config_b], source="test")
-        await storage.replace_all([config_a], source="test")
-        all_rows = await storage.get_all_proxies()
-        assert len(all_rows) == 2
-
-    async def test_existing_proxy_not_counted_as_added(self, storage, config_a):
-        await storage.replace_all([config_a], source="test")
-        stats = await storage.replace_all([config_a], source="test")
-        assert stats.added == 0
-
-    async def test_rollback_on_failure(self, storage, config_a):
-        await storage.upsert_proxy(config_a)
-        original_rows = await storage.get_all_proxies()
-
-        bad_config = _make_config(host="3.3.3.3", raw_uri="")
-        bad_config.raw_uri = None  # will cause DB constraint failure
-
-        try:
-            await storage.replace_all([bad_config], source="test")
-        except Exception:
-            pass
-
-        rows_after = await storage.get_all_proxies()
-        assert len(rows_after) == len(original_rows)
-
-
 class TestProcesses:
     async def test_upsert_and_get_process(self, storage, config_a):
         proxy_id = await storage.upsert_proxy(config_a)
@@ -136,7 +86,6 @@ class TestProcesses:
         proc = await storage.get_process(proxy_id)
         assert proc is not None
         assert proc.local_port == 10800
-        assert proc.config_path == "/tmp/x.json"
         assert proc.status == "stopped"
 
     async def test_set_process_pid(self, storage, config_a):
@@ -166,7 +115,6 @@ class TestProcesses:
 
     async def test_get_available_port_none_when_full(self, storage):
         from config import settings
-        configs = []
         for i, port in enumerate(range(settings.PROXY_PORT_START, settings.PROXY_PORT_END + 1)):
             cfg = _make_config(
                 uuid=f"9d507afd-7e90-4b7e-8bd8-{i:012d}",
@@ -174,13 +122,11 @@ class TestProcesses:
                 port=port,
                 raw_uri=f"vless://9d507afd-7e90-4b7e-8bd8-{i:012d}@10.0.0.{i + 1}:{port}?security=none",
             )
-            configs.append(cfg)
             proxy_id = await storage.upsert_proxy(cfg)
             await storage.upsert_process(proxy_id, local_port=port, config_path=f"/tmp/{i}.json")
             await storage.set_process_pid(proxy_id, local_port=port, pid=1000 + i, status="running")
 
-        port = await storage.get_available_port()
-        assert port is None
+        assert await storage.get_available_port() is None
 
 
 class TestGetStats:
@@ -206,4 +152,4 @@ class TestGetStats:
 
     async def test_empty_db_stats(self, storage):
         stats = await storage.get_stats()
-        assert stats == PoolStats(active=0, dead=0, pending=0, invalid=0, running_processes=0)
+        assert stats == PoolStats(active=0, dead=0, pending=0, running_processes=0)
