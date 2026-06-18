@@ -1,8 +1,31 @@
 # VLESS Proxy Manager
-
-A service that manages a pool of VLESS proxies via subscriptions: fetches server lists, checks liveness via xray-core, and exposes working SOCKS5 proxies through a REST API and Telegram bot.
-
 [Русская версия](README_RU.md)
+
+## What It Does
+
+**Proxy service:**
+- Fetches VLESS servers from one or more subscriptions (base64 URL)
+- Checks each server's liveness via xray-core (TCP ping + HTTP)
+- Maintains a pool of working SOCKS5 proxies on local ports (default 10800–10820)
+- Sorts proxies by latency — the fastest is always on the first port
+- Periodically rechecks servers and automatically replaces dead ones
+- Stores state in SQLite; fetches subscriptions immediately on restart
+- Deploys as a systemd service on Ubuntu
+
+**REST API (`http://127.0.0.1:8888`):**
+- `GET /proxy/best` — returns the fastest proxy (`socks5://127.0.0.1:10800`)
+- `GET /proxy/list` — list of all active proxies
+
+**Telegram bot:**
+- `/status` — pool stats and list of active proxies
+- `/check` — force recheck all servers
+- Chat notifications when a proxy changes status
+
+**Use cases:**
+- Telegram bots with `aiogram` / `python-telegram-bot` — both support `socks5://` natively
+- Any Python HTTP client (`httpx`, `requests`) — pass the proxy URL from `/proxy/best`
+- CI scripts and automation — query the API and inject the proxy into commands
+- As a transparent proxy pool — the service handles liveness and port assignment automatically
 
 ## Quick Start
 
