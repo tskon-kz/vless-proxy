@@ -4,7 +4,7 @@ import os
 import pytest
 
 from core.parser import VlessConfig
-from core.xray import generate_xray_config, write_xray_config
+from core.xray import _generate_xray_config as generate_xray_config, write_xray_config
 
 
 def _config(**kwargs) -> VlessConfig:
