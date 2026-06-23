@@ -36,7 +36,7 @@ class ProxyManager:
         self.storage = storage
         self.process_pool = XrayProcessPool(storage)
         self.health_checker = HealthChecker(storage)
-        self.subscription_manager: SubscriptionManager | None = None
+        self.subscription_manager = SubscriptionManager(storage, self)
         self._lock = asyncio.Lock()
         self._health_task: asyncio.Task | None = None
         self._started_at: float = time.time()
@@ -53,15 +53,12 @@ class ProxyManager:
     async def startup(self) -> None:
         await self.storage.init()
         self._started_at = time.time()
-
-        self.subscription_manager = SubscriptionManager(self.storage, self)
         await self.subscription_manager.startup()
 
         self._health_task = asyncio.create_task(self._health_loop())
 
     async def shutdown(self) -> None:
-        if self.subscription_manager:
-            await self.subscription_manager.shutdown()
+        await self.subscription_manager.shutdown()
 
         if self._health_task is not None:
             self._health_task.cancel()
@@ -72,8 +69,7 @@ class ProxyManager:
 
         for task in list(self._background_tasks):
             task.cancel()
-        if self._background_tasks:
-            await asyncio.gather(*self._background_tasks, return_exceptions=True)
+        await asyncio.gather(*self._background_tasks, return_exceptions=True)
 
         await self.process_pool.stop_all()
         await self.storage.close()
