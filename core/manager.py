@@ -50,11 +50,12 @@ class ProxyManager:
         task.add_done_callback(self._background_tasks.discard)
         return task
 
+    # -- lifecycle --
+
     async def startup(self) -> None:
         await self.storage.init()
         self._started_at = time.time()
         await self.subscription_manager.startup()
-
         self._health_task = asyncio.create_task(self._health_loop())
 
     async def shutdown(self) -> None:
@@ -75,11 +76,106 @@ class ProxyManager:
         await self.storage.close()
         logger.info("manager shut down")
 
+    # -- public API --
+
+    async def get_status(self) -> ManagerStatus:
+        pool_stats = await self.storage.get_stats()
+        active_proxies = await self.storage.get_active_proxies()
+
+        proxy_infos: list[ProxyInfo] = []
+        for proxy in active_proxies:
+            process = await self.storage.get_process(proxy.id)
+            if process is None or process.status != "running":
+                continue
+            proxy_infos.append(
+                ProxyInfo(
+                    proxy_id=proxy.id,
+                    name=proxy.name,
+                    host=proxy.host,
+                    port=proxy.port,
+                    local_port=process.local_port,
+                    latency_ms=proxy.latency_ms,
+                    last_check=proxy.last_check,
+                )
+            )
+
+        proxy_infos.sort(key=lambda p: p.local_port)
+
+        return ManagerStatus(
+            pool_stats=pool_stats,
+            active_proxies=proxy_infos,
+            uptime_seconds=time.time() - self._started_at,
+        )
+
+    async def force_recheck(self) -> None:
+        self._create_task(self._run_full_check())
+
+    # -- health loop --
+
+    async def _health_loop(self) -> None:
+        cycle = 0
+        while True:
+            await asyncio.sleep(settings.CHECK_INTERVAL)
+            logger.info("health check cycle %d", cycle)
+            await self.health_checker.check_all_active(
+                on_status_change=self._status_change_callback
+            )
+            await self.health_checker.check_pending(
+                on_status_change=self._status_change_callback
+            )
+            if cycle % 3 == 0:
+                logger.info("rechecking dead proxies (cycle %d)", cycle)
+                await self.health_checker.check_dead(
+                    on_status_change=self._status_change_callback
+                )
+            await self._reorder_by_latency()
+            cycle += 1
+
+    async def _run_full_check(self) -> None:
+        await self.health_checker.check_all_active(
+            on_status_change=self._status_change_callback
+        )
+        await self.health_checker.check_pending(
+            on_status_change=self._status_change_callback
+        )
+        await self._reorder_by_latency()
+
     async def _check_pending_and_reorder(self) -> None:
         await self.health_checker.check_pending(
             on_status_change=self._status_change_callback
         )
         await self._reorder_by_latency()
+
+    # -- reactions --
+
+    def _status_change_callback(self, result: HealthResult) -> None:
+        asyncio.create_task(self._on_health_change(result))
+
+    async def _on_health_change(self, result: HealthResult) -> None:
+        proxy = await self.storage.get_proxy_by_id(result.proxy_id)
+        if proxy is None:
+            return
+
+        async with self._lock:
+            if result.success:
+                if self.process_pool.get_process(result.proxy_id) is None:
+                    config = vless_config_from_proxy(proxy)
+                    await self.process_pool.start_proxy(result.proxy_id, config)
+            else:
+                if self.process_pool.get_process(result.proxy_id) is not None:
+                    await self.process_pool.stop_proxy(result.proxy_id)
+
+        prev_success = self._last_notified.get(result.proxy_id)
+        status_changed = prev_success is not None and prev_success != result.success
+        self._last_notified[result.proxy_id] = result.success
+
+        if status_changed and self.notify_callback and settings.TG_NOTIFY_CHAT_ID:
+            try:
+                await self.notify_callback(proxy, result)
+            except Exception as exc:
+                logger.warning("notify_callback failed: %s", exc)
+
+    # -- reordering --
 
     async def _reorder_by_latency(self) -> None:
         async with self._lock:
@@ -114,90 +210,3 @@ class ProxyManager:
             for proxy, new_port in moves:
                 config = vless_config_from_proxy(proxy)
                 await self.process_pool.start_proxy(proxy.id, config, port=new_port)
-
-    def _status_change_callback(self, result: HealthResult) -> None:
-        asyncio.create_task(self._on_health_change(result))
-
-    async def _on_health_change(self, result: HealthResult) -> None:
-        proxy = await self.storage.get_proxy_by_id(result.proxy_id)
-        if proxy is None:
-            return
-
-        async with self._lock:
-            if result.success:
-                if self.process_pool.get_process(result.proxy_id) is None:
-                    config = vless_config_from_proxy(proxy)
-                    await self.process_pool.start_proxy(result.proxy_id, config)
-            else:
-                if self.process_pool.get_process(result.proxy_id) is not None:
-                    await self.process_pool.stop_proxy(result.proxy_id)
-
-        prev_success = self._last_notified.get(result.proxy_id)
-        status_changed = prev_success is not None and prev_success != result.success
-        self._last_notified[result.proxy_id] = result.success
-
-        if status_changed and self.notify_callback and settings.TG_NOTIFY_CHAT_ID:
-            try:
-                await self.notify_callback(proxy, result)
-            except Exception as exc:
-                logger.warning("notify_callback failed: %s", exc)
-
-    async def get_status(self) -> ManagerStatus:
-        pool_stats = await self.storage.get_stats()
-        active_proxies = await self.storage.get_active_proxies()
-
-        proxy_infos: list[ProxyInfo] = []
-        for proxy in active_proxies:
-            process = await self.storage.get_process(proxy.id)
-            if process is None or process.status != "running":
-                continue
-            proxy_infos.append(
-                ProxyInfo(
-                    proxy_id=proxy.id,
-                    name=proxy.name,
-                    host=proxy.host,
-                    port=proxy.port,
-                    local_port=process.local_port,
-                    latency_ms=proxy.latency_ms,
-                    last_check=proxy.last_check,
-                )
-            )
-
-        proxy_infos.sort(key=lambda p: p.local_port)
-
-        return ManagerStatus(
-            pool_stats=pool_stats,
-            active_proxies=proxy_infos,
-            uptime_seconds=time.time() - self._started_at,
-        )
-
-    async def force_recheck(self) -> None:
-        self._create_task(self._run_full_check())
-
-    async def _health_loop(self) -> None:
-        cycle = 0
-        while True:
-            await asyncio.sleep(settings.CHECK_INTERVAL)
-            logger.info("health check cycle %d", cycle)
-            await self.health_checker.check_all_active(
-                on_status_change=self._status_change_callback
-            )
-            await self.health_checker.check_pending(
-                on_status_change=self._status_change_callback
-            )
-            if cycle % 3 == 0:
-                logger.info("rechecking dead proxies (cycle %d)", cycle)
-                await self.health_checker.check_dead(
-                    on_status_change=self._status_change_callback
-                )
-            await self._reorder_by_latency()
-            cycle += 1
-
-    async def _run_full_check(self) -> None:
-        await self.health_checker.check_all_active(
-            on_status_change=self._status_change_callback
-        )
-        await self.health_checker.check_pending(
-            on_status_change=self._status_change_callback
-        )
-        await self._reorder_by_latency()
