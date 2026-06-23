@@ -8,8 +8,8 @@ import pytest
 from core.health import (
     HealthChecker,
     HealthResult,
-    check_proxy,
-    check_proxy_tcp,
+    _check_proxy as check_proxy,
+    _check_tcp as check_proxy_tcp,
     vless_config_from_proxy,
 )
 from core.parser import VlessConfig
@@ -141,7 +141,7 @@ class TestHealthChecker:
         proxy = (await storage.get_all_proxies())[0]
 
         checker = HealthChecker(storage)
-        with patch("core.health.check_proxy_tcp", return_value=False):
+        with patch("core.health._check_tcp", return_value=False):
             result = await checker.check_one(proxy, config)
 
         assert result.success is False
@@ -156,7 +156,7 @@ class TestHealthChecker:
         received: list[HealthResult] = []
         checker = HealthChecker(storage)
 
-        with patch("core.health.check_proxy_tcp", return_value=False):
+        with patch("core.health._check_tcp", return_value=False):
             await checker.check_one(proxy, config, on_status_change=received.append)
 
         assert len(received) == 1
@@ -168,8 +168,8 @@ class TestHealthChecker:
         proxy = (await storage.get_all_proxies())[0]
 
         checker = HealthChecker(storage)
-        with patch("core.health.check_proxy_tcp", return_value=True), \
-             patch("core.health.check_proxy", return_value=HealthResult(
+        with patch("core.health._check_tcp", return_value=True), \
+             patch("core.health._check_proxy", return_value=HealthResult(
                  proxy_id=proxy.id, success=True, latency_ms=42,
                  status_code=200, error="", checked_at=time.time(),
                  check_url="https://example.com",
@@ -193,7 +193,7 @@ class TestHealthChecker:
         proxies = await storage.get_pending_proxies()
         checker = HealthChecker(storage)
 
-        with patch("core.health.check_proxy_tcp", return_value=False):
+        with patch("core.health._check_tcp", return_value=False):
             results = await checker._check_batch(proxies)
 
         assert len(results) == 7
