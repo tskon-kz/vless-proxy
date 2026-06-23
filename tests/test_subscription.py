@@ -7,7 +7,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from core.subscription import FetchResult, SubscriptionFetcher, SubscriptionManager
+from core.subscription import (
+    FetchResult,
+    SubscriptionManager,
+    _decode_body,
+    _fetch_subscription,
+)
 
 VALID_URI = (
     "vless://9d507afd-7e90-4b7e-8bd8-6877f7a304ae@1.2.3.4:443"
@@ -77,31 +82,31 @@ class TestDecodeBody:
     def test_base64_with_vless_decoded(self):
         content = f"{VALID_URI}\n{VALID_URI_2}"
         encoded = base64.b64encode(content.encode()).decode()
-        result = SubscriptionFetcher._decode_body(encoded)
+        result = _decode_body(encoded)
         assert "vless://" in result
         assert result == content
 
     def test_plain_text_returned_as_is(self):
         plain = f"{VALID_URI}\n{VALID_URI_2}"
-        result = SubscriptionFetcher._decode_body(plain)
+        result = _decode_body(plain)
         assert result == plain
 
     def test_base64_without_vless_returns_plain(self):
         content = "not a vless link at all"
         encoded = base64.b64encode(content.encode()).decode()
-        result = SubscriptionFetcher._decode_body(encoded)
+        result = _decode_body(encoded)
         assert result == encoded
 
     def test_invalid_base64_returns_plain(self):
         garbage = "!!!not_base64!!!"
-        result = SubscriptionFetcher._decode_body(garbage)
+        result = _decode_body(garbage)
         assert result == garbage
 
     def test_base64_with_newlines_stripped_before_decode(self):
         content = VALID_URI
         encoded = base64.b64encode(content.encode()).decode()
         wrapped = "\n".join(encoded[i:i+60] for i in range(0, len(encoded), 60))
-        result = SubscriptionFetcher._decode_body(wrapped)
+        result = _decode_body(wrapped)
         assert "vless://" in result
 
 
@@ -112,9 +117,8 @@ class TestDecodeBody:
 class TestFetch:
     async def test_returns_links_from_plain_text(self):
         body = f"{VALID_URI}\n{VALID_URI_2}\nnot-a-link"
-        fetcher = SubscriptionFetcher()
         with _http(200, body):
-            links, error = await fetcher.fetch(SUB_URL)
+            links, error = await _fetch_subscription(SUB_URL)
         assert not error
         assert len(links) == 2
         assert all(l.startswith("vless://") for l in links)
@@ -122,39 +126,34 @@ class TestFetch:
     async def test_returns_links_from_base64(self):
         content = f"{VALID_URI}\n{VALID_URI_2}"
         encoded = base64.b64encode(content.encode()).decode()
-        fetcher = SubscriptionFetcher()
         with _http(200, encoded):
-            links, error = await fetcher.fetch(SUB_URL)
+            links, error = await _fetch_subscription(SUB_URL)
         assert not error
         assert len(links) == 2
 
     async def test_non_200_returns_error(self):
-        fetcher = SubscriptionFetcher()
         with _http(404, ""):
-            links, error = await fetcher.fetch(SUB_URL)
+            links, error = await _fetch_subscription(SUB_URL)
         assert "404" in error
         assert links == []
 
     async def test_timeout_returns_error(self):
-        fetcher = SubscriptionFetcher()
         with patch("core.subscription.settings") as s:
             s.SUBSCRIPTION_TIMEOUT = 30
             with _http_raise(asyncio.TimeoutError()):
-                links, error = await fetcher.fetch(SUB_URL)
+                links, error = await _fetch_subscription(SUB_URL)
         assert "timeout" in error.lower()
         assert links == []
 
     async def test_connection_error_returns_error(self):
-        fetcher = SubscriptionFetcher()
         with _http_raise(OSError("connection refused")):
-            links, error = await fetcher.fetch(SUB_URL)
+            links, error = await _fetch_subscription(SUB_URL)
         assert error != ""
         assert links == []
 
     async def test_empty_response_returns_zero_links(self):
-        fetcher = SubscriptionFetcher()
         with _http(200, "# just comments\nhello world"):
-            links, error = await fetcher.fetch(SUB_URL)
+            links, error = await _fetch_subscription(SUB_URL)
         assert not error
         assert links == []
 
