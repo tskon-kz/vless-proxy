@@ -43,7 +43,7 @@ class ProxyManager:
         self._background_tasks: set[asyncio.Task] = set()
         self.notify_callback: Callable[[ProxyRow, HealthResult], Awaitable[None]] | None = None
         self._last_notified: dict[int, bool] = {}
-        self._recently_died: set[tuple[str, int]] = set()
+        self._warmed_up: bool = False
 
     def _create_task(self, coro) -> asyncio.Task:
         task = asyncio.create_task(coro)
@@ -83,11 +83,12 @@ class ProxyManager:
     def _seed_new_pending(self, proxies: list[ProxyRow]) -> None:
         for p in proxies:
             if p.id not in self._last_notified:
-                self._last_notified[p.id] = (p.host, p.port) in self._recently_died
+                self._last_notified[p.id] = False
 
     async def _check_pending_and_reorder(self) -> None:
-        pending = await self.storage.get_pending_proxies()
-        self._seed_new_pending(pending)
+        if self._warmed_up:
+            pending = await self.storage.get_pending_proxies()
+            self._seed_new_pending(pending)
         await self.health_checker.check_pending(
             on_status_change=self._status_change_callback
         )
@@ -144,11 +145,6 @@ class ProxyManager:
                 if self.process_pool.get_process(result.proxy_id) is not None:
                     await self.process_pool.stop_proxy(result.proxy_id)
 
-        if result.success:
-            self._recently_died.discard((proxy.host, proxy.port))
-        else:
-            self._recently_died.add((proxy.host, proxy.port))
-
         prev_success = self._last_notified.get(result.proxy_id)
         status_changed = prev_success is not None and prev_success != result.success
         self._last_notified[result.proxy_id] = result.success
@@ -199,8 +195,9 @@ class ProxyManager:
             await self.health_checker.check_all_active(
                 on_status_change=self._status_change_callback
             )
-            pending = await self.storage.get_pending_proxies()
-            self._seed_new_pending(pending)
+            if self._warmed_up:
+                pending = await self.storage.get_pending_proxies()
+                self._seed_new_pending(pending)
             await self.health_checker.check_pending(
                 on_status_change=self._status_change_callback
             )
@@ -210,6 +207,7 @@ class ProxyManager:
                     on_status_change=self._status_change_callback
                 )
             await self._reorder_by_latency()
+            self._warmed_up = True
             cycle += 1
 
     async def _run_full_check(self) -> None:
