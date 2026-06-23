@@ -43,7 +43,6 @@ class ProxyManager:
         self._background_tasks: set[asyncio.Task] = set()
         self.notify_callback: Callable[[ProxyRow, HealthResult], Awaitable[None]] | None = None
         self._last_notified: dict[int, bool] = {}
-        self._warmed_up: bool = False
 
     def _create_task(self, coro) -> asyncio.Task:
         task = asyncio.create_task(coro)
@@ -80,15 +79,7 @@ class ProxyManager:
         await self.storage.close()
         logger.info("manager shut down")
 
-    def _seed_new_pending(self, proxies: list[ProxyRow]) -> None:
-        for p in proxies:
-            if p.id not in self._last_notified:
-                self._last_notified[p.id] = False
-
     async def _check_pending_and_reorder(self) -> None:
-        if self._warmed_up:
-            pending = await self.storage.get_pending_proxies()
-            self._seed_new_pending(pending)
         await self.health_checker.check_pending(
             on_status_change=self._status_change_callback
         )
@@ -195,9 +186,6 @@ class ProxyManager:
             await self.health_checker.check_all_active(
                 on_status_change=self._status_change_callback
             )
-            if self._warmed_up:
-                pending = await self.storage.get_pending_proxies()
-                self._seed_new_pending(pending)
             await self.health_checker.check_pending(
                 on_status_change=self._status_change_callback
             )
@@ -207,7 +195,6 @@ class ProxyManager:
                     on_status_change=self._status_change_callback
                 )
             await self._reorder_by_latency()
-            self._warmed_up = True
             cycle += 1
 
     async def _run_full_check(self) -> None:
