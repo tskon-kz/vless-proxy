@@ -37,12 +37,13 @@ class ProxyManager:
         self.process_pool = XrayProcessPool(storage)
         self.health_checker = HealthChecker(storage)
         self.subscription_manager = SubscriptionManager(storage, self)
+        self.notify_callback: Callable[[ProxyRow, HealthResult], Awaitable[None]] | None = None
+
         self._lock = asyncio.Lock()
+        self._background_tasks: set[asyncio.Task] = set()
         self._health_task: asyncio.Task | None = None
         self._started_at: float = time.time()
-        self._background_tasks: set[asyncio.Task] = set()
-        self.notify_callback: Callable[[ProxyRow, HealthResult], Awaitable[None]] | None = None
-        self._last_notified: dict[int, bool] = {}
+        self._last_notified: dict[str, bool] = {}
 
     def _create_task(self, coro) -> asyncio.Task:
         task = asyncio.create_task(coro)
@@ -165,9 +166,9 @@ class ProxyManager:
                 if self.process_pool.get_process(result.proxy_id) is not None:
                     await self.process_pool.stop_proxy(result.proxy_id)
 
-        prev_success = self._last_notified.get(result.proxy_id)
+        prev_success = self._last_notified.get(proxy.name)
         status_changed = prev_success is not None and prev_success != result.success
-        self._last_notified[result.proxy_id] = result.success
+        self._last_notified[proxy.name] = result.success
 
         if status_changed and self.notify_callback and settings.TG_NOTIFY_CHAT_ID:
             try:
