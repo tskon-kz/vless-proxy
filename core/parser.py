@@ -3,6 +3,8 @@ import uuid as uuid_module
 from dataclasses import dataclass
 from urllib.parse import parse_qs, parse_qsl, unquote, urlencode, urlparse, urlunparse
 
+from config import settings
+
 
 @dataclass
 class VlessConfig:
@@ -45,12 +47,11 @@ class ParseResult:
 
 
 _VALID_TRANSPORT_TYPES = {"tcp", "ws", "grpc", "http", "kcp", "quic"}
-_RUSSIAN_MARKERS = {"🇷🇺", "ru", "россия"}
 
 
-def _is_russian(name: str) -> bool:
+def _is_excluded(name: str) -> bool:
     name_lower = name.lower()
-    return any(marker in name_lower for marker in _RUSSIAN_MARKERS)
+    return any(m.lower() in name_lower for m in settings.EXCLUDED_SERVER_MARKERS)
 
 
 def _first(params: dict, key: str, default: str = "") -> str:
@@ -95,8 +96,8 @@ def _validate_config(config: VlessConfig) -> list[str]:
     if config.flow == "xtls-rprx-vision" and config.security not in ("reality", "tls"):
         errors.append("flow=xtls-rprx-vision requires security=reality or security=tls")
 
-    if _is_russian(config.name):
-        errors.append("Russian server excluded")
+    if _is_excluded(config.name):
+        errors.append("Server excluded by config rules")
 
     return errors
 

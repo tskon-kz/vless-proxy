@@ -44,4 +44,7 @@ class Settings(BaseSettings):
     SUBSCRIPTION_FETCH_INTERVAL: int = 1800  # 30 minutes
     SUBSCRIPTION_TIMEOUT: int = 30
 
+    # Parser — servers whose name contains any of the listed substrings are excluded
+    EXCLUDED_SERVER_MARKERS: List[str] = ["🇷🇺", "ru", "россия"]
+
 settings = Settings()
