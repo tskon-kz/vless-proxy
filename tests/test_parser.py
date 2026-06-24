@@ -1,12 +1,6 @@
 import pytest
 
-from core.parser import (
-    ParseResult,
-    VlessConfig,
-    generate_summary,
-    parse_vless,
-    parse_vless_list,
-)
+from core.parser import ParseResult, VlessConfig, parse_vless, parse_vless_list
 
 VALID_REALITY_URI = (
     "vless://9d507afd-7e90-4b7e-8bd8-6877f7a304ae@155.117.137.168:443"
@@ -173,32 +167,3 @@ class TestParseVlessList:
         configs, results = parse_vless_list("")
         assert configs == []
         assert results == []
-
-
-class TestGenerateSummary:
-    def test_all_valid(self):
-        results = [
-            ParseResult(success=True, raw_uri="vless://a", config=None),
-            ParseResult(success=True, raw_uri="vless://b", config=None),
-        ]
-        summary = generate_summary(results)
-        assert "Обработано ссылок: 2" in summary
-        assert "✅ Валидных: 2" in summary
-        assert "❌ Невалидных: 0" in summary
-        assert "Ошибки" not in summary
-
-    def test_with_errors(self):
-        results = [
-            ParseResult(success=True, raw_uri="vless://ok", config=None),
-            ParseResult(success=False, raw_uri="vless://bad", error="invalid UUID"),
-        ]
-        summary = generate_summary(results)
-        assert "Обработано ссылок: 2" in summary
-        assert "✅ Валидных: 1" in summary
-        assert "❌ Невалидных: 1" in summary
-        assert "Ошибки:" in summary
-        assert "invalid UUID" in summary
-
-    def test_empty(self):
-        summary = generate_summary([])
-        assert "0" in summary
