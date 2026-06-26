@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 from config import settings
 from core.health import HealthChecker, HealthResult, vless_config_from_proxy
-from core.storage import PoolStats, ProxyRow, Storage
+from core.storage import DownStat, PoolStats, ProxyRow, Storage
 from core.subscription import SubscriptionManager
 from core.xray import XrayProcessPool
 
@@ -111,6 +111,12 @@ class ProxyManager:
     async def force_recheck(self) -> None:
         self._create_task(self._run_full_check())
 
+    async def get_down_stats(self) -> tuple[list[DownStat], list[DownStat]]:
+        now = time.time()
+        day = await self.storage.get_down_stats(now - 86400)
+        week = await self.storage.get_down_stats(now - 86400 * 7)
+        return day, week
+
     # -- health loop --
 
     async def _health_loop(self) -> None:
@@ -165,6 +171,11 @@ class ProxyManager:
             else:
                 if self.process_pool.get_process(result.proxy_id) is not None:
                     await self.process_pool.stop_proxy(result.proxy_id)
+
+        if result.success:
+            await self.storage.record_up(proxy.name)
+        else:
+            await self.storage.record_down(proxy.name, proxy.host)
 
         prev_success = self._last_notified.get(proxy.name)
         status_changed = prev_success is not None and prev_success != result.success

@@ -45,3 +45,13 @@ CREATE TABLE IF NOT EXISTS subscriptions (
     updated_at       REAL NOT NULL
 )
 """
+
+CREATE_DOWNTIME_EVENTS = """
+CREATE TABLE IF NOT EXISTS downtime_events (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    proxy_name   TEXT NOT NULL,
+    proxy_host   TEXT NOT NULL,
+    went_down_at REAL NOT NULL,
+    came_up_at   REAL
+)
+"""

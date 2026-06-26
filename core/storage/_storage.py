@@ -6,12 +6,14 @@ import aiosqlite
 
 from config import settings
 from core.parser import VlessConfig
-from core.storage._ddl import CREATE_PROCESSES, CREATE_PROXIES, CREATE_SUBSCRIPTIONS
+from core.storage._ddl import CREATE_DOWNTIME_EVENTS, CREATE_PROCESSES, CREATE_PROXIES, CREATE_SUBSCRIPTIONS
 from core.storage._models import (
+    DownStat,
     PoolStats,
     ProcessRow,
     ProxyRow,
     SubscriptionRow,
+    _row_to_downstat,
     _row_to_process,
     _row_to_proxy,
     _row_to_subscription,
@@ -37,6 +39,7 @@ class Storage:
         await self._db.execute(CREATE_PROXIES)
         await self._db.execute(CREATE_PROCESSES)
         await self._db.execute(CREATE_SUBSCRIPTIONS)
+        await self._db.execute(CREATE_DOWNTIME_EVENTS)
 
         try:
             await self._db.execute("ALTER TABLE proxies ADD COLUMN subscription_id INTEGER")
@@ -196,6 +199,56 @@ class Storage:
             pending=row["pending"] or 0,
             running_processes=proc_row["cnt"] or 0,
         )
+
+    # -- downtime --
+
+    async def record_down(self, proxy_name: str, proxy_host: str) -> None:
+        now = time.time()
+        await self._conn.execute(
+            """
+            INSERT INTO downtime_events (proxy_name, proxy_host, went_down_at)
+            SELECT ?, ?, ?
+            WHERE NOT EXISTS (
+                SELECT 1 FROM downtime_events WHERE proxy_name = ? AND came_up_at IS NULL
+            )
+            """,
+            (proxy_name, proxy_host, now, proxy_name),
+        )
+        await self._conn.commit()
+
+    async def record_up(self, proxy_name: str) -> None:
+        now = time.time()
+        await self._conn.execute(
+            """
+            UPDATE downtime_events SET came_up_at = ?
+            WHERE id = (
+                SELECT id FROM downtime_events
+                WHERE proxy_name = ? AND came_up_at IS NULL
+                ORDER BY went_down_at DESC
+                LIMIT 1
+            )
+            """,
+            (now, proxy_name),
+        )
+        await self._conn.commit()
+
+    async def get_down_stats(self, since_ts: float) -> list[DownStat]:
+        now = time.time()
+        async with self._conn.execute(
+            """
+            SELECT
+                proxy_name,
+                proxy_host,
+                COUNT(*) AS down_count,
+                SUM(COALESCE(came_up_at, ?) - went_down_at) AS total_downtime_s
+            FROM downtime_events
+            WHERE went_down_at > ?
+            GROUP BY proxy_name, proxy_host
+            ORDER BY down_count DESC, total_downtime_s DESC
+            """,
+            (now, since_ts),
+        ) as cursor:
+            return [_row_to_downstat(r) async for r in cursor]
 
     # -- subscriptions --
 

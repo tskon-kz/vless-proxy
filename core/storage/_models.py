@@ -83,6 +83,23 @@ def _row_to_process(row: aiosqlite.Row) -> ProcessRow:
     )
 
 
+@dataclass
+class DownStat:
+    proxy_name: str
+    proxy_host: str
+    down_count: int
+    total_downtime_s: float
+
+
+def _row_to_downstat(row: aiosqlite.Row) -> "DownStat":
+    return DownStat(
+        proxy_name=row["proxy_name"],
+        proxy_host=row["proxy_host"],
+        down_count=row["down_count"],
+        total_downtime_s=row["total_downtime_s"] or 0.0,
+    )
+
+
 def _row_to_subscription(row: aiosqlite.Row) -> SubscriptionRow:
     return SubscriptionRow(
         id=row["id"],

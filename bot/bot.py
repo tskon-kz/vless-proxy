@@ -43,6 +43,12 @@ async def cmd_check(message: Message, manager: ProxyManager) -> None:
     await manager.force_recheck()
 
 
+@router.message(Command("down_stats"))
+async def cmd_down_stats(message: Message, manager: ProxyManager) -> None:
+    day, week = await manager.get_down_stats()
+    await message.answer(strings.down_stats_message(day, week))
+
+
 @router.message(Command("status"))
 async def cmd_status(message: Message, manager: ProxyManager) -> None:
     status = await manager.get_status()
@@ -67,6 +73,7 @@ async def cmd_status(message: Message, manager: ProxyManager) -> None:
 
 _COMMANDS = [
     BotCommand(command="status", description="Состояние пула прокси"),
+    BotCommand(command="down_stats", description="Статистика падений за 24ч и 7 дней"),
     BotCommand(command="check", description="Принудительная проверка всех серверов"),
     BotCommand(command="help", description="Справка"),
 ]
